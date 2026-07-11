@@ -1,13 +1,38 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
-import { verifySignatureAppRouter } from "@upstash/qstash/dist/nextjs"; // swap for remix-compatible verify if needed
+import { Receiver } from "@upstash/qstash";
 import prisma from "~/db.server";
 import { sendWhatsappTemplateMessage } from "~/services/whatsapp.server";
 import type { WhatsappJob } from "~/services/queue.server";
 
+const receiver = new Receiver({
+  currentSigningKey: process.env.QSTASH_CURRENT_SIGNING_KEY!,
+  nextSigningKey: process.env.QSTASH_NEXT_SIGNING_KEY!,
+});
+
 // This route is called by QStash (not by the browser or Shopify).
 // It performs the real WhatsApp send and logs the result.
 export async function action({ request }: ActionFunctionArgs) {
-  const job: WhatsappJob = await request.json();
+  const bodyText = await request.text();
+  const signature = request.headers.get("upstash-signature");
+
+  if (signature) {
+    try {
+      const valid = await receiver.verify({ signature, body: bodyText });
+      if (!valid) {
+        return new Response("invalid signature", { status: 401 });
+      }
+    } catch (err) {
+      console.error("QStash signature verification failed", err);
+      return new Response("invalid signature", { status: 401 });
+    }
+  } else {
+    // No signature header present — only acceptable in local dev without
+    // QStash in front of this route. In production this should never happen;
+    // treat it as suspicious rather than silently trusting the request.
+    console.warn("Missing upstash-signature header on job request");
+  }
+
+  const job: WhatsappJob = JSON.parse(bodyText);
 
   const shop = await prisma.shop.findUnique({ where: { id: job.shopId } });
   if (!shop) return new Response("shop not found", { status: 200 });
