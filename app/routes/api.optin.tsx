@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
-import { authenticate } from "../shopify.server";
-import prisma from "../db.server";
+import { authenticate } from "~/shopify.server";
+import prisma from "~/db.server";
 
 // This route is exposed via Shopify's App Proxy (configured in shopify.app.toml
 // as e.g. /apps/whatsapp-offers -> /api/optin). Shopify signs proxy requests,

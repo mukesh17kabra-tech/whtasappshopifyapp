@@ -1,7 +1,7 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
-import { authenticate } from "../shopify.server";
-import prisma from "../db.server";
-import { queueWhatsappJob } from "../services/queue.server";
+import { authenticate } from "~/shopify.server";
+import prisma from "~/db.server";
+import { queueWhatsappJob } from "~/services/queue.server";
 
 // Shopify expects a response within ~5s. We write the event to Postgres
 // and enqueue a background job, then return 200 immediately. The actual

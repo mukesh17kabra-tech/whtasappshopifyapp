@@ -14,9 +14,9 @@ import {
   Banner,
   EmptyState,
 } from "@shopify/polaris";
-import { authenticate } from "../shopify.server";
-import prisma from "../db.server";
-import { queueWhatsappJob } from "../services/queue.server";
+import { authenticate } from "~/shopify.server";
+import prisma from "~/db.server";
+import { queueWhatsappJob } from "~/services/queue.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);

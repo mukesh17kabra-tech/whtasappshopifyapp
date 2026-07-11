@@ -1,8 +1,8 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { verifySignatureAppRouter } from "@upstash/qstash/dist/nextjs"; // swap for remix-compatible verify if needed
-import prisma from "../db.server";
-import { sendWhatsappTemplateMessage } from "../services/whatsapp.server";
-import type { WhatsappJob } from "../services/queue.server";
+import prisma from "~/db.server";
+import { sendWhatsappTemplateMessage } from "~/services/whatsapp.server";
+import type { WhatsappJob } from "~/services/queue.server";
 
 // This route is called by QStash (not by the browser or Shopify).
 // It performs the real WhatsApp send and logs the result.

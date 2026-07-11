@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
-import prisma from "../db.server";
-import { sendWhatsappTextMessage } from "../services/whatsapp.server";
+import prisma from "~/db.server";
+import { sendWhatsappTextMessage } from "~/services/whatsapp.server";
 
 // Meta calls this with a GET request once, when you register the webhook
 // URL in your App's WhatsApp > Configuration settings, to verify you control

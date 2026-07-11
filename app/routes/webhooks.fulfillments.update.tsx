@@ -1,7 +1,7 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
-import { authenticate } from "../shopify.server";
-import prisma from "../db.server";
-import { queueWhatsappJob } from "../services/queue.server";
+import { authenticate } from "~/shopify.server";
+import prisma from "~/db.server";
+import { queueWhatsappJob } from "~/services/queue.server";
 
 // Handles both FULFILLMENTS_CREATE and FULFILLMENTS_UPDATE.
 // Shopify's fulfillment payload includes tracking_company, tracking_number,

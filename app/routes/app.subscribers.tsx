@@ -12,8 +12,8 @@ import {
   Button,
 } from "@shopify/polaris";
 import { useState, useCallback } from "react";
-import { authenticate } from "../shopify.server";
-import prisma from "../db.server";
+import { authenticate } from "~/shopify.server";
+import prisma from "~/db.server";
 
 const PAGE_SIZE = 25;
 
