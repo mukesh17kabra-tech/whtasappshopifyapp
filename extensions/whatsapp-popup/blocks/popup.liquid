@@ -1,16 +1,18 @@
 {% comment %}
   WhatsApp Offer Popup — App Block
-  Merchant adds this via Theme Editor > App Embeds.
-  Calls the app's proxy route (/apps/whatsapp-offers/optin) to save the number.
-  Update the proxy path below to match what you configure in shopify.app.toml.
+  Merchant adds this via Theme Editor > App Embeds. Content (heading,
+  subheading, image, on/off) is controlled from the app's Popup Settings
+  page, not block settings here — this fetches that config live on page load.
 {% endcomment %}
 
 <div id="wa-optin-popup" class="wa-optin-popup" style="display:none;">
   <div class="wa-optin-popup__box">
     <button type="button" class="wa-optin-popup__close" aria-label="Close">&times;</button>
-    <h3>{{ block.settings.heading | default: "Get offers on WhatsApp" }}</h3>
-    <p>{{ block.settings.subheading | default: "Share your WhatsApp number to get offer alerts and order tracking updates." }}</p>
+    <img id="wa-optin-image" class="wa-optin-popup__image" style="display:none;" alt="" />
+    <h3 id="wa-optin-heading">Get offers on WhatsApp</h3>
+    <p id="wa-optin-subheading">Share your name and WhatsApp number to get offer alerts and order tracking updates.</p>
     <form id="wa-optin-form">
+      <input type="text" id="wa-name" name="name" placeholder="Your name" required />
       <input type="tel" id="wa-phone" name="phone" placeholder="+91 98765 43210" required />
       <label class="wa-optin-consent">
         <input type="checkbox" id="wa-consent" required />
@@ -28,14 +30,35 @@
     var form = document.getElementById('wa-optin-form');
     var status = document.getElementById('wa-optin-status');
     var closeBtn = popup.querySelector('.wa-optin-popup__close');
+    var headingEl = document.getElementById('wa-optin-heading');
+    var subheadingEl = document.getElementById('wa-optin-subheading');
+    var imageEl = document.getElementById('wa-optin-image');
     var STORAGE_KEY = 'wa_optin_dismissed';
 
-    // Show popup once per session unless already dismissed/submitted
-    if (!sessionStorage.getItem(STORAGE_KEY)) {
-      setTimeout(function () {
-        popup.style.display = 'flex';
-      }, {{ block.settings.delay_ms | default: 3000 }});
-    }
+    if (sessionStorage.getItem(STORAGE_KEY)) return;
+
+    // Fetch merchant's current settings before deciding whether to show
+    // anything at all — respects the on/off toggle from the app dashboard.
+    fetch('/apps/whatsapp-offers/popup-config')
+      .then(function (res) { return res.json(); })
+      .then(function (config) {
+        if (!config.enabled) return;
+
+        if (config.heading) headingEl.textContent = config.heading;
+        if (config.subheading) subheadingEl.textContent = config.subheading;
+        if (config.imageUrl) {
+          imageEl.src = config.imageUrl;
+          imageEl.style.display = 'block';
+        }
+
+        setTimeout(function () {
+          popup.style.display = 'flex';
+        }, config.delayMs || 3000);
+      })
+      .catch(function () {
+        // If the config fetch fails, don't show anything rather than
+        // showing potentially stale/wrong default content.
+      });
 
     closeBtn.addEventListener('click', function () {
       popup.style.display = 'none';
@@ -44,6 +67,7 @@
 
     form.addEventListener('submit', async function (e) {
       e.preventDefault();
+      var name = document.getElementById('wa-name').value.trim();
       var phone = document.getElementById('wa-phone').value.trim();
       var consent = document.getElementById('wa-consent').checked;
 
@@ -53,7 +77,7 @@
         var res = await fetch('/apps/whatsapp-offers/optin', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ phoneNumber: phone, consent: consent }),
+          body: JSON.stringify({ name: name, phoneNumber: phone, consent: consent }),
         });
         var data = await res.json();
 
@@ -84,10 +108,15 @@
     position: absolute; top: 8px; right: 12px; border: none; background: none;
     font-size: 22px; cursor: pointer;
   }
-  #wa-optin-form input[type="tel"] {
-    width: 100%; padding: 10px; margin: 12px 0; border: 1px solid #ccc; border-radius: 6px;
+  .wa-optin-popup__image {
+    width: 100%; border-radius: 8px; margin-bottom: 12px; display: block;
   }
-  .wa-optin-consent { display: flex; align-items: center; gap: 8px; font-size: 12px; text-align: left; margin-bottom: 12px; }
+  #wa-optin-form input[type="text"],
+  #wa-optin-form input[type="tel"] {
+    width: 100%; padding: 10px; margin: 8px 0; border: 1px solid #ccc; border-radius: 6px;
+    box-sizing: border-box;
+  }
+  .wa-optin-consent { display: flex; align-items: center; gap: 8px; font-size: 12px; text-align: left; margin: 8px 0 12px; }
   #wa-optin-form button[type="submit"] {
     width: 100%; padding: 10px; background: #25D366; color: #fff; border: none;
     border-radius: 6px; font-weight: 600; cursor: pointer;
@@ -98,10 +127,6 @@
 {
   "name": "WhatsApp Offer Popup",
   "target": "body",
-  "settings": [
-    { "type": "text", "id": "heading", "label": "Heading" },
-    { "type": "text", "id": "subheading", "label": "Subheading" },
-    { "type": "number", "id": "delay_ms", "label": "Delay before showing (ms)", "default": 3000 }
-  ]
+  "settings": []
 }
 {% endschema %}

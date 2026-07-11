@@ -40,7 +40,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
 
-  if (!shop) return json({ templates: [] });
+  if (!shop) return json({ templates: [], connected: false });
 
   const templates = await prisma.template.findMany({
     where: { shopId: shop.id },
@@ -49,6 +49,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   return json({
     templates: templates.map((t) => ({ ...t, createdAt: t.createdAt.toISOString() })),
+    connected: Boolean(shop.whatsappAccessToken && shop.whatsappPhoneNumberId),
   });
 }
 
@@ -73,11 +74,20 @@ export async function action({ request }: ActionFunctionArgs) {
       return json({ error: "Template not found" }, { status: 404 });
     }
 
+    if (!shop.whatsappBusinessAccountId || !shop.whatsappAccessToken) {
+      return json(
+        { error: "Connect your WhatsApp Business Account first — see the Connect WhatsApp page." },
+        { status: 400 },
+      );
+    }
+
     const result = await submitMetaTemplate({
       displayName: template.name,
       category: template.category as "MARKETING" | "UTILITY",
       body: template.body,
       imageUrl: template.imageUrl,
+      businessAccountId: shop.whatsappBusinessAccountId,
+      accessToken: shop.whatsappAccessToken,
     });
 
     if (!result.success) {
@@ -107,7 +117,11 @@ export async function action({ request }: ActionFunctionArgs) {
       return json({ error: "Not submitted yet" }, { status: 400 });
     }
 
-    const result = await checkMetaTemplateStatus(template.whatsappTemplateId);
+    if (!shop.whatsappAccessToken) {
+      return json({ error: "WhatsApp not connected for this shop" }, { status: 400 });
+    }
+
+    const result = await checkMetaTemplateStatus(template.whatsappTemplateId, shop.whatsappAccessToken);
     if (!result.success) {
       return json({ error: result.error }, { status: 400 });
     }
@@ -152,7 +166,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Templates() {
-  const { templates } = useLoaderData<typeof loader>();
+  const { templates, connected } = useLoaderData<typeof loader>();
   const submit = useSubmit();
   const navigation = useNavigation();
 
@@ -352,6 +366,14 @@ export default function Templates() {
   return (
     <Page title="Message Templates">
       <BlockStack gap="400">
+        {!connected && (
+          <Banner tone="warning" action={{ content: "Connect WhatsApp", url: "/app/whatsapp-connect" }}>
+            You haven't connected a WhatsApp Business Account yet — templates
+            can be composed here, but submitting for approval or sending
+            requires connecting first.
+          </Banner>
+        )}
+
         <Banner tone="info">
           Compose your message here, then click <strong>Submit for approval</strong> —
           this submits it directly to Meta's API for you, including the image
@@ -411,12 +433,13 @@ export default function Templates() {
 
                 <BlockStack gap="200">
                   <Text as="p" variant="bodySm" tone="subdued">
-                    Insert a dynamic tag — click to add at your cursor. Note:
-                    for broadcast/marketing templates, skip these — broadcasts
-                    have no per-customer order to fill them with, so a
-                    variable-free message (e.g. just the offer text) is what
-                    actually sends. Tags are meant for order confirmation/
-                    shipping templates instead, which do have that context.
+                    Insert a dynamic tag — click to add at your cursor.
+                    <strong> First Name</strong> works in broadcast/marketing
+                    templates too, since we capture that from the popup now.
+                    The others (Order ID, Tracking URL, etc.) only work for
+                    order confirmation/shipping templates, which have that
+                    per-customer context — a broadcast with those will be
+                    skipped rather than sent with wrong data.
                   </Text>
                   <InlineStack gap="150" wrap>
                     {ORDER_VARIABLES.map((v) => (

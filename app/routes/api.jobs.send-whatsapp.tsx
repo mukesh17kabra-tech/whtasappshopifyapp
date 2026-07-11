@@ -3,6 +3,7 @@ import { Receiver } from "@upstash/qstash";
 import prisma from "~/db.server";
 import { sendWhatsappTemplateMessage, sendWhatsappCustomMessage } from "~/services/whatsapp.server";
 import { renderTemplateBody } from "~/services/template.server";
+import { getShopWhatsappCredentials } from "~/services/embedded-signup.server";
 import type { WhatsappJob } from "~/services/queue.server";
 
 const receiver = new Receiver({
@@ -37,6 +38,12 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const shop = await prisma.shop.findUnique({ where: { id: job.shopId } });
   if (!shop) return new Response("shop not found", { status: 200 });
+
+  const credentials = await getShopWhatsappCredentials(job.shopId);
+  if (!credentials && process.env.WHATSAPP_PROVIDER !== "bridge") {
+    console.error(`Shop ${job.shopId} has no WhatsApp Business Account connected — skipping send.`);
+    return new Response("WhatsApp not connected for this shop", { status: 200 });
+  }
 
   // Defense in depth: re-check opt-out status right before sending, in case
   // the customer opted out after the broadcast was queued but before this
@@ -86,15 +93,16 @@ export async function action({ request }: ActionFunctionArgs) {
 
       if (template.status === "approved" && template.whatsappTemplateId) {
         const variableKeys: string[] = JSON.parse(template.variableKeys || "[]");
+        const unsupportedKeys = variableKeys.filter((k) => k !== "first_name");
 
-        if (variableKeys.length > 0) {
+        if (unsupportedKeys.length > 0) {
           // Broadcasts have no per-customer order/tracking context to fill
           // real values for {order_id}, {tracking_url}, etc. — those only
           // make sense for the order-confirmation/shipment-update flows.
-          // A marketing template with variables can't be safely broadcast
-          // this way; log and skip rather than send garbage placeholder text.
+          // {first_name} IS supported since we do have the subscriber's name
+          // from the popup opt-in.
           console.error(
-            `Template ${template.id} has variables (${variableKeys.join(", ")}) but broadcasts have no per-customer data to fill them — skipping send. Use a template with no variables for broadcasts.`,
+            `Template ${template.id} has variables (${unsupportedKeys.join(", ")}) not usable in a broadcast context — skipping send.`,
           );
           return new Response(
             "Template has variables not usable in a broadcast context",
@@ -102,21 +110,30 @@ export async function action({ request }: ActionFunctionArgs) {
           );
         }
 
+        const broadcastVariables: Record<string, string> = {};
+        if (variableKeys.includes("first_name")) {
+          broadcastVariables.param_1 = optin?.name || "there";
+        }
+
         result = await sendWhatsappTemplateMessage({
           to: job.phoneNumber,
           templateName: template.name,
-          variables: {},
+          variables: broadcastVariables,
+          credentials,
         });
       } else {
         // Not yet approved (draft/pending/rejected) — send as freeform via
         // whichever provider is active. On the Meta path this only reaches
         // customers within their 24h service window; on the bridge path it
         // always works.
-        const renderedText = renderTemplateBody(template.body, {});
+        const renderedText = renderTemplateBody(template.body, {
+          first_name: optin?.name || "there",
+        });
         result = await sendWhatsappCustomMessage({
           to: job.phoneNumber,
           text: renderedText,
           imageUrl: template.imageUrl,
+          credentials,
         });
       }
       templateName = template.name;
@@ -125,6 +142,7 @@ export async function action({ request }: ActionFunctionArgs) {
         to: job.phoneNumber,
         templateName,
         variables,
+        credentials,
       });
     }
 

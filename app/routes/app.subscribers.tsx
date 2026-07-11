@@ -100,6 +100,7 @@ export async function action({ request }: ActionFunctionArgs) {
     const countryName = String(formData.get("countryName") ?? "");
     const minLen = Number(formData.get("minLen") ?? 6);
     const maxLen = Number(formData.get("maxLen") ?? 14);
+    const name = String(formData.get("name") ?? "").trim() || null;
     const isOther = dialCode === "";
 
     if (!localNumber) {
@@ -125,8 +126,8 @@ export async function action({ request }: ActionFunctionArgs) {
 
     await prisma.optin.upsert({
       where: { shopId_phoneNumber: { shopId: shop.id, phoneNumber } },
-      update: { optedOutAt: null },
-      create: { shopId: shop.id, phoneNumber, source: "manual" },
+      update: { optedOutAt: null, ...(name && { name }) },
+      create: { shopId: shop.id, phoneNumber, name, source: "manual" },
     });
 
     return json({ success: true, added: 1 });
@@ -153,8 +154,11 @@ export async function action({ request }: ActionFunctionArgs) {
     const results = { added: 0, skipped: 0, invalid: [] as string[] };
 
     for (const line of dataLines) {
-      // Take the first comma-separated column, in case it's a multi-column CSV
-      const firstColumn = line.split(",")[0];
+      // Take the first comma-separated column as phone, optional second
+      // column as name, in case it's a multi-column CSV.
+      const columns = line.split(",").map((c) => c.trim());
+      const firstColumn = columns[0];
+      const nameColumn = columns[1] || null;
       const phoneNumber = normalizePhone(firstColumn);
 
       if (!phoneNumber) {
@@ -170,7 +174,7 @@ export async function action({ request }: ActionFunctionArgs) {
           if (existing.optedOutAt) {
             await prisma.optin.update({
               where: { id: existing.id },
-              data: { optedOutAt: null },
+              data: { optedOutAt: null, ...(nameColumn && { name: nameColumn }) },
             });
             results.added++;
           } else {
@@ -178,7 +182,7 @@ export async function action({ request }: ActionFunctionArgs) {
           }
         } else {
           await prisma.optin.create({
-            data: { shopId: shop.id, phoneNumber, source: "csv_import" },
+            data: { shopId: shop.id, phoneNumber, name: nameColumn, source: "csv_import" },
           });
           results.added++;
         }
@@ -246,6 +250,7 @@ export default function Subscribers() {
   const [query, setQuery] = useState(search);
   const [countryIndex, setCountryIndex] = useState("0"); // default India
   const [localNumber, setLocalNumber] = useState("");
+  const [manualName, setManualName] = useState("");
   const [csvFileName, setCsvFileName] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const submit = useSubmit();
@@ -270,9 +275,11 @@ export default function Subscribers() {
     formData.append("countryName", selectedCountry.name);
     formData.append("minLen", String(selectedCountry.minLen));
     formData.append("maxLen", String(selectedCountry.maxLen));
+    formData.append("name", manualName);
     submit(formData, { method: "post" });
     setLocalNumber("");
-  }, [selectedCountry, localNumber, submit]);
+    setManualName("");
+  }, [selectedCountry, localNumber, manualName, submit]);
 
   const handleCsvSelect = useCallback(
     (file: File) => {
@@ -299,6 +306,7 @@ export default function Subscribers() {
   }, [navigation.state, csvFileName]);
 
   const rows = optins.map((o) => [
+    o.name || "—",
     o.phoneNumber,
     o.source,
     new Date(o.consentAt).toLocaleDateString(),
@@ -344,6 +352,15 @@ export default function Subscribers() {
                     Add one number
                   </Text>
                   <InlineStack gap="200" blockAlign="end">
+                    <Box minWidth="140px">
+                      <TextField
+                        label="Name (optional)"
+                        placeholder="Rahul Sharma"
+                        value={manualName}
+                        onChange={setManualName}
+                        autoComplete="off"
+                      />
+                    </Box>
                     <Box minWidth="220px">
                       <Select
                         label="Country"
@@ -399,9 +416,9 @@ export default function Subscribers() {
                     {csvFileName && <Text as="span" variant="bodySm">{csvFileName}</Text>}
                   </InlineStack>
                   <Text as="p" variant="bodySm" tone="subdued">
-                    One phone number per row (with country code), or a CSV
-                    with numbers in the first column. A header row is fine —
-                    it's detected and skipped automatically.
+                    One phone number per row (with country code), optionally
+                    followed by a comma and the person's name. A header row
+                    is fine — it's detected and skipped automatically.
                   </Text>
                 </BlockStack>
               </Box>
@@ -430,8 +447,8 @@ export default function Subscribers() {
             {rows.length > 0 ? (
               <>
                 <DataTable
-                  columnContentTypes={["text", "text", "text", "text", "text"]}
-                  headings={["Phone Number", "Source", "Opted In", "Status", ""]}
+                  columnContentTypes={["text", "text", "text", "text", "text", "text"]}
+                  headings={["Name", "Phone Number", "Source", "Opted In", "Status", ""]}
                   rows={rows}
                 />
                 {totalPages > 1 && (

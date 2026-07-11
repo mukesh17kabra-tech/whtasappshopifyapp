@@ -22,9 +22,11 @@ export default function App() {
         <Link to="/app" rel="home">
           Dashboard
         </Link>
+        <Link to="/app/whatsapp-connect">Connect WhatsApp</Link>
         <Link to="/app/broadcasts">Broadcasts</Link>
         <Link to="/app/subscribers">Subscribers</Link>
         <Link to="/app/templates">Templates</Link>
+        <Link to="/app/popup-settings">Popup Settings</Link>
       </NavMenu>
       <Outlet />
     </AppProvider>

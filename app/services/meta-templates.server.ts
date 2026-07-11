@@ -2,13 +2,20 @@
 // Graph API, so merchants submit templates from inside this app instead of
 // Meta Business Manager's UI directly.
 //
+// Every function here takes the merchant's own businessAccountId + accessToken
+// (from their connected WhatsApp Business Account, via Embedded Signup) —
+// there is no shared/global template account. WHATSAPP_APP_ID remains a
+// global env var since it's YOUR Meta app (the Tech Provider app), used only
+// for the image-upload step, which is scoped by access token regardless of
+// whose WABA it's for.
+//
 // Docs: https://developers.facebook.com/docs/whatsapp/cloud-api/guides/create-message-templates
 
 const GRAPH_VERSION = "v19.0";
 
-function metaHeaders() {
+function metaHeaders(accessToken: string) {
   return {
-    Authorization: `Bearer ${process.env.WHATSAPP_ACCESS_TOKEN}`,
+    Authorization: `Bearer ${accessToken}`,
     "Content-Type": "application/json",
   };
 }
@@ -44,14 +51,11 @@ function toMetaTemplateName(displayName: string): string {
 }
 
 // Uploads an image to Meta's Resumable Upload API to get a "header handle" —
-// required when submitting a template whose header is an image. This is a
-// separate flow from sending a regular message with an image link; template
-// headers specifically need this handle at submission time.
+// required when submitting a template whose header is an image.
 // Docs: https://developers.facebook.com/docs/graph-api/guides/upload
-async function getMetaHeaderHandle(imageUrl: string): Promise<string | null> {
+async function getMetaHeaderHandle(imageUrl: string, accessToken: string): Promise<string | null> {
   const appId = process.env.WHATSAPP_APP_ID;
-  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-  if (!appId || !accessToken) {
+  if (!appId) {
     console.error("WHATSAPP_APP_ID not set — required for image template headers");
     return null;
   }
@@ -100,17 +104,20 @@ export type SubmitTemplateResult =
   | { success: true; metaTemplateId: string; metaTemplateName: string; status: string }
   | { success: false; error: string };
 
-// Submits a template to Meta for approval, including an image header if
-// provided (via Meta's Resumable Upload API to get a header handle first).
+// Submits a template to Meta for approval on the MERCHANT'S OWN WhatsApp
+// Business Account (not a shared/global one), including an image header if
+// provided.
 export async function submitMetaTemplate(params: {
   displayName: string;
   category: "MARKETING" | "UTILITY";
   body: string;
   imageUrl?: string | null;
+  businessAccountId: string;
+  accessToken: string;
 }): Promise<SubmitTemplateResult> {
-  const businessAccountId = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
-  if (!businessAccountId || !process.env.WHATSAPP_ACCESS_TOKEN) {
-    return { success: false, error: "WhatsApp Business Account not configured" };
+  const { businessAccountId, accessToken } = params;
+  if (!businessAccountId || !accessToken) {
+    return { success: false, error: "Connect your WhatsApp Business Account first (see Connect WhatsApp page)." };
   }
 
   const { metaBody, variableKeys } = convertToMetaPlaceholders(params.body);
@@ -119,7 +126,7 @@ export async function submitMetaTemplate(params: {
   const components: any[] = [];
 
   if (params.imageUrl) {
-    const handle = await getMetaHeaderHandle(params.imageUrl);
+    const handle = await getMetaHeaderHandle(params.imageUrl, accessToken);
     if (!handle) {
       return {
         success: false,
@@ -149,7 +156,7 @@ export async function submitMetaTemplate(params: {
       `https://graph.facebook.com/${GRAPH_VERSION}/${businessAccountId}/message_templates`,
       {
         method: "POST",
-        headers: metaHeaders(),
+        headers: metaHeaders(accessToken),
         body: JSON.stringify({
           name: metaTemplateName,
           language: "en_US",
@@ -183,20 +190,19 @@ export type TemplateStatusResult =
   | { success: false; error: string };
 
 // Polls Meta for the current approval status of a previously submitted
-// template. Call this from a "Refresh status" button in the UI, or on a
-// schedule, since Meta doesn't push status updates to your app by default
-// (webhook-based status updates require additional app review to receive).
+// template, using the merchant's own access token.
 export async function checkMetaTemplateStatus(
   metaTemplateId: string,
+  accessToken: string,
 ): Promise<TemplateStatusResult> {
-  if (!process.env.WHATSAPP_ACCESS_TOKEN) {
-    return { success: false, error: "WhatsApp not configured" };
+  if (!accessToken) {
+    return { success: false, error: "WhatsApp not connected for this shop" };
   }
 
   try {
     const res = await fetch(
       `https://graph.facebook.com/${GRAPH_VERSION}/${metaTemplateId}?fields=status,rejected_reason`,
-      { headers: metaHeaders() },
+      { headers: metaHeaders(accessToken) },
     );
     const data = await res.json();
 

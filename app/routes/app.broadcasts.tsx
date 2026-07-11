@@ -1,5 +1,5 @@
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation } from "@remix-run/react";
+import { useLoaderData, useSubmit, useNavigation, useActionData } from "@remix-run/react";
 import { useState, useCallback } from "react";
 import {
   Page,
@@ -82,23 +82,39 @@ export async function action({ request }: ActionFunctionArgs) {
 
   // Enqueue one job per subscriber. QStash handles the actual pacing/retries;
   // this loop just publishes messages, it doesn't wait for delivery.
-  await Promise.all(
-    subscribers.map((s) =>
-      queueWhatsappJob({
-        type: "broadcast_message",
-        shopId: shop.id,
-        broadcastId: broadcast.id,
-        phoneNumber: s.phoneNumber,
-        templateId,
-      }),
-    ),
-  );
+  try {
+    await Promise.all(
+      subscribers.map((s) =>
+        queueWhatsappJob({
+          type: "broadcast_message",
+          shopId: shop.id,
+          broadcastId: broadcast.id,
+          phoneNumber: s.phoneNumber,
+          templateId,
+        }),
+      ),
+    );
+  } catch (err) {
+    console.error("Failed to queue broadcast jobs", err);
+    await prisma.broadcast.update({
+      where: { id: broadcast.id },
+      data: { status: "failed" },
+    });
+    return json(
+      {
+        error:
+          "Couldn't queue the broadcast — check QSTASH_TOKEN and SHOPIFY_APP_URL are set correctly in your environment variables.",
+      },
+      { status: 500 },
+    );
+  }
 
   return json({ success: true, broadcastId: broadcast.id });
 }
 
 export default function Broadcasts() {
   const { broadcasts, templates, subscriberCount } = useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
   const [selectedTemplate, setSelectedTemplate] = useState(
@@ -146,6 +162,10 @@ export default function Broadcasts() {
                 This will send to all {subscriberCount} active subscribers,
                 using a template you composed on the Templates page.
               </Text>
+
+              {actionData && "error" in actionData && actionData.error && (
+                <Banner tone="critical">{actionData.error}</Banner>
+              )}
 
               {templates.length === 0 ? (
                 <Banner tone="warning">

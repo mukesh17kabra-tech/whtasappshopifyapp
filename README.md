@@ -172,3 +172,37 @@ As requested, the default send path no longer requires any Meta/Google approval.
 **What this trades away:** no template approval step, fully freeform messages including images, sent instantly. **What it costs:** this isn't an officially sanctioned way to use WhatsApp — numbers that send too much too fast, or get reported as spam, can get banned. Start with a dedicated number, go slow on volume initially, and keep an eye on delivery failures. Full risk discussion is in `whatsapp-bridge-service/README.md`.
 
 If you ever want to switch back to the compliant Meta path (e.g. after your account earns higher messaging limits), set `WHATSAPP_PROVIDER=meta` and fill in the `WHATSAPP_PHONE_NUMBER_ID`/`WHATSAPP_ACCESS_TOKEN` vars — the code path for that is still intact in `whatsapp.server.ts`.
+
+## Popup Settings + name capture + delete + country validation
+
+- **Popup content is now merchant-editable from inside the app** — new "Popup Settings" page: enable/disable toggle, heading, subheading, image upload, delay. The storefront popup fetches this live (via `/apps/whatsapp-offers/popup-config`) instead of using fixed content — change it in the app, no re-editing the theme needed. If disabled, the popup shows nothing at all.
+- **Important routing note:** Shopify's App Proxy only maps to ONE base URL, then appends the rest of the path. So both `/apps/whatsapp-offers/optin` and `/apps/whatsapp-offers/popup-config` are handled by a single splat route, `app/routes/api.proxy.$.tsx`, which dispatches based on the trailing path segment. `shopify.app.toml`'s `app_proxy.url` now points to `/api/proxy` — if you had it pointing at `/api/optin` from an earlier version, update it and run `shopify app deploy` again.
+- **Popup now captures Name, not just phone number.** Stored on `Optin.name`. This also means broadcast/marketing templates can now use the `{first_name}` variable — it's the one exception to "broadcasts can't use variables," since we do have real per-customer name data for every subscriber, unlike order/tracking data which only exists for order-flow templates.
+- **Subscribers page**: added a country-code selector (India, US/Canada, UK, UAE, Australia, Singapore, Pakistan, Bangladesh, Nepal, Saudi Arabia, Germany, France, or "Other") for manual entry — catches a country/number-length mismatch immediately with a specific error. CSV import now also accepts an optional second column for name. Added a permanent **Delete** action (double-click to confirm) alongside the existing reversible Opt out/Re-subscribe toggle.
+- **Fixed a crash**: broadcast sending previously had no error handling around the QStash enqueue call — if a config var was wrong, the whole page crashed with a generic "Application Error" and no detail. Now wrapped in try/catch, marks the broadcast as failed, and shows a specific error banner (env var hint included) instead of crashing.
+
+## Multi-merchant WhatsApp (Embedded Signup) — for listing this app publicly
+
+This is the architecture change needed to actually sell this app to other Shopify stores, rather than every merchant sharing one WhatsApp number. Each merchant connects their own WhatsApp Business Account from inside your app.
+
+### What changed in the code
+
+- `Shop` model now stores per-merchant `whatsappPhoneNumberId`, `whatsappBusinessAccountId`, `whatsappAccessToken`, `whatsappDisplayPhoneNumber` — there is no more shared/global WhatsApp account for the Meta path.
+- `app/routes/app.whatsapp-connect.tsx` — new page with a "Connect WhatsApp Business Account" button. Loads Meta's JS SDK, opens the Embedded Signup popup, and on completion exchanges the returned authorization code for that merchant's own access token (see `app/services/embedded-signup.server.ts`).
+- Every send function (`whatsapp.server.ts`, `meta-templates.server.ts`) now takes `credentials`/`businessAccountId`+`accessToken` as parameters instead of reading global env vars — the job worker (`api.jobs.send-whatsapp.tsx`) looks up each shop's own credentials before sending.
+- The inbound webhook (`webhooks.whatsapp.inbound.tsx`) now routes incoming messages to the correct shop by matching `phone_number_id` in Meta's payload against each shop's connected number, since one webhook URL now receives traffic for every merchant.
+
+### What you need to set up in Meta (this part can't be automated — it's account/business setup)
+
+1. **Apply to become a Meta Tech Provider.** This is what lets your app facilitate other businesses connecting their WhatsApp accounts through you, rather than only working with your own. Search "WhatsApp Tech Provider" in Meta's developer docs for the current application process — it typically involves business verification and takes some days.
+2. **Create an Embedded Signup configuration.** In your Meta App dashboard → WhatsApp → Embedded Signup → Configurations → create one. This defines what the signup popup looks like and asks for. Copy its ID into `WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID`.
+3. **Get your App Secret.** Meta Developer Portal → your app → Settings → Basic → App Secret (click "Show"). This goes in `WHATSAPP_APP_SECRET` — treat it like a password, never expose it client-side.
+4. **Register one webhook URL** (Meta App dashboard → WhatsApp → Configuration → Webhooks) pointing at `https://your-app.vercel.app/webhooks/whatsapp/inbound` — this single URL receives inbound messages for every merchant who connects, routed internally by phone number ID as described above.
+
+### Token expiry — one thing to build next
+
+Embedded Signup gives you a long-lived token valid for about 60 days, not permanent. There's currently no automatic refresh flow — before it expires, a merchant's sends will start failing. Worth adding: a scheduled job (e.g. weekly, via QStash's schedule feature or a Vercel Cron) that checks each connected shop's token age and prompts a re-connect before expiry, or attempts a silent refresh where Meta's API allows it.
+
+### Testing this yourself
+
+Since you likely don't have a second real Shopify store handy, you can still test the connect flow on your own dev store — connect your own WhatsApp Business Account through the new flow instead of hardcoding it via env vars, and everything else (broadcasts, templates, opt-outs) should work exactly as before, just reading credentials from your Shop row instead of process.env.

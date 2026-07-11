@@ -36,11 +36,22 @@ model Shop {
   installedAt  DateTime @default(now())
   uninstalled  Boolean  @default(false)
 
+  // Per-merchant WhatsApp Business Account, connected via Meta's Embedded
+  // Signup flow (see app/routes/app.whatsapp-connect.tsx). Each shop sends
+  // through their own WhatsApp number/account, not a shared one — required
+  // for listing this as a real multi-merchant Shopify app.
+  whatsappPhoneNumberId      String?
+  whatsappBusinessAccountId  String?
+  whatsappAccessToken        String?  // long-lived token for this merchant's WABA
+  whatsappDisplayPhoneNumber String?  // human-readable number, for display in the UI
+  whatsappConnectedAt        DateTime?
+
   optins        Optin[]
   ordersTrack   OrderTracking[]
   templates     Template[]
   broadcasts    Broadcast[]
   messageLogs   MessageLog[]
+  popupSettings PopupSettings?
 }
 
 model Optin {
@@ -48,12 +59,25 @@ model Optin {
   shop         Shop      @relation(fields: [shopId], references: [id])
   shopId       String
   phoneNumber  String    // E.164 format, e.g. +919876543210
+  name         String?   // captured from the popup alongside the number
   consentAt    DateTime  @default(now())
-  source       String    // "popup" | "checkout" | "manual"
+  source       String    // "popup" | "checkout" | "manual" | "csv_import"
   optedOutAt   DateTime?
 
   @@unique([shopId, phoneNumber])
   @@index([shopId])
+}
+
+model PopupSettings {
+  id          String   @id @default(cuid())
+  shop        Shop     @relation(fields: [shopId], references: [id])
+  shopId      String   @unique
+  enabled     Boolean  @default(true)
+  heading     String   @default("Get offers on WhatsApp")
+  subheading  String   @default("Share your name and WhatsApp number to get offer alerts and order tracking updates.")
+  imageUrl    String?
+  delayMs     Int      @default(3000)
+  updatedAt   DateTime @updatedAt
 }
 
 model OrderTracking {
