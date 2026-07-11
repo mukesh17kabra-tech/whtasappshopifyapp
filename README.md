@@ -108,3 +108,13 @@ You'll need each of these as an approved **Utility** template in Meta Business M
 - Meta webhook signature verification (`X-Hub-Signature-256`) on the inbound WhatsApp webhook — see note above, do this before production
 - Multi-day broadcast batching for subscriber lists larger than your daily QStash quota
 - Template status sync with Meta's API (currently you self-report a template as "approved" when registering it)
+
+## Vercel + Remix function duration
+
+`vercel.json` intentionally does **not** set a `functions` block with path globs like `app/routes/webhooks.*.tsx`. That syntax is for Vercel's native `/api` directory functions — Remix builds your routes into its own internal output format, so those globs never match anything and the build fails with `unmatched-function-pattern`.
+
+For Remix apps, function duration is controlled differently:
+- **Vercel Hobby (free) plan**: functions are capped at **10 seconds**, and this cannot be overridden — it's a Hobby plan limit, not something `vercel.json` can raise. This is fine for the webhook handlers here since they just write to Postgres and enqueue a job (should complete in well under 1s normally).
+- **Vercel Pro plan**: you can raise the cap up to 60s (or 300s with extra config) via the **Vercel Dashboard → Project Settings → Functions → Default Max Duration**, not via `vercel.json`, when using the Remix framework preset.
+
+Since this whole stack is designed to stay on free tiers, and the fast-ack + QStash queue pattern means no single function call should ever need more than a couple seconds, the Hobby plan's 10s cap should never actually bind here. If you later see timeout errors specifically on `api.jobs.send-whatsapp`, that's a sign the WhatsApp API call itself is slow — check Meta's status page before assuming you need to upgrade Vercel.

@@ -1,12 +1,4 @@
 {
   "framework": "remix",
-  "buildCommand": "npm run vercel-build",
-  "functions": {
-    "app/routes/webhooks.*.tsx": {
-      "maxDuration": 10
-    },
-    "app/routes/api.jobs.*.tsx": {
-      "maxDuration": 60
-    }
-  }
+  "buildCommand": "npm run vercel-build"
 }
