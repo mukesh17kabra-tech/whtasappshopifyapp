@@ -5,5 +5,7 @@
 // Remix's client/server code splitting — see app.billing.tsx.
 export const BILLING_PLANS = {
   GROWTH: "Growth",
+  GROWTH_YEARLY: "Growth (Yearly)",
   PRO: "Pro",
+  PRO_YEARLY: "Pro (Yearly)",
 } as const;

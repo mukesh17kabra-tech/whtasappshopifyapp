@@ -43,6 +43,12 @@ model Shop {
   whatsappBridgeConnected Boolean   @default(false)
   whatsappConnectedAt     DateTime?
 
+  // Dev/testing only — lets you simulate a plan locally when Shopify's
+  // Billing API is blocked (e.g. some dev store configurations return 403).
+  // Never used as a source of truth once real billing is live; see
+  // app.billing.tsx for how this is only consulted as a fallback.
+  manualPlanOverride String?
+
   optins        Optin[]
   ordersTrack   OrderTracking[]
   templates     Template[]

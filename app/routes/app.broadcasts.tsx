@@ -28,6 +28,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return json({ broadcasts: [], templates: [], subscriberCount: 0, hasActivePayment });
   }
 
+  const effectivelyPaid = hasActivePayment || Boolean(shop.manualPlanOverride);
+
   const [broadcasts, templates, subscriberCount] = await Promise.all([
     prisma.broadcast.findMany({
       where: { shopId: shop.id },
@@ -44,7 +46,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     broadcasts: broadcasts.map((b) => ({ ...b, createdAt: b.createdAt.toISOString() })),
     templates,
     subscriberCount,
-    hasActivePayment,
+    hasActivePayment: effectivelyPaid,
   });
 }
 
@@ -59,7 +61,8 @@ export async function action({ request }: ActionFunctionArgs) {
   if (!shop) return json({ error: "Shop not found" }, { status: 404 });
 
   const { hasActivePayment } = await billing.check({ isTest: true });
-  if (!hasActivePayment) {
+  const effectivelyPaidForSend = hasActivePayment || Boolean(shop.manualPlanOverride);
+  if (!effectivelyPaidForSend) {
     return json(
       { error: "Marketing broadcasts require the Growth or Pro plan. Upgrade on the Billing page." },
       { status: 402 },
