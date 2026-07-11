@@ -51,19 +51,34 @@ export async function action({ request }: ActionFunctionArgs) {
 
   try {
     if (intent === "connect") {
-      await fetch(`${bridgeUrl}/connect/${shop.id}`, { method: "POST", headers });
+      const res = await fetch(`${bridgeUrl}/connect/${shop.id}`, { method: "POST", headers });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => "");
+        return json(
+          { error: `Bridge returned ${res.status} when starting connection. ${res.status === 401 ? "Check WHATSAPP_BRIDGE_SECRET matches exactly on both sides." : errText}` },
+          { status: 502 },
+        );
+      }
       return json({ success: true });
     }
 
     if (intent === "poll") {
       const statusRes = await fetch(`${bridgeUrl}/status/${shop.id}`, { headers });
+      if (!statusRes.ok) {
+        return json(
+          { error: `Bridge returned ${statusRes.status} checking status. ${statusRes.status === 401 ? "Check WHATSAPP_BRIDGE_SECRET matches exactly on both sides." : "Check the bridge service is running."}` },
+          { status: 502 },
+        );
+      }
       const statusData = await statusRes.json();
 
       let qr = null;
       if (statusData.status === "qr_ready") {
         const qrRes = await fetch(`${bridgeUrl}/qr/${shop.id}`, { headers });
-        const qrData = await qrRes.json();
-        qr = qrData.qr ?? null;
+        if (qrRes.ok) {
+          const qrData = await qrRes.json();
+          qr = qrData.qr ?? null;
+        }
       }
 
       if (statusData.status === "connected" && !shop.whatsappBridgeConnected) {
@@ -125,7 +140,17 @@ export default function WhatsappConnect() {
       fetcher.submit(formData, { method: "post" });
     }, 2000);
 
-    return () => clearInterval(interval);
+    // Safety net: never spin forever, even in an unexpected failure mode.
+    // 20s is generous — the bridge normally responds with a QR within a
+    // couple seconds of a successful connect.
+    const timeout = setTimeout(() => {
+      setPolling(false);
+    }, 20000);
+
+    return () => {
+      clearInterval(interval);
+      clearTimeout(timeout);
+    };
   }, [polling]);
 
   useEffect(() => {
@@ -157,6 +182,13 @@ export default function WhatsappConnect() {
 
         {fetcher.data && "error" in fetcher.data && fetcher.data.error && (
           <Banner tone="critical">{fetcher.data.error}</Banner>
+        )}
+        {!polling && !connected && !qr && fetcher.data && !("error" in fetcher.data) && (
+          <Banner tone="warning">
+            Didn't hear back from the bridge in time. Double-check
+            WHATSAPP_BRIDGE_URL and WHATSAPP_BRIDGE_SECRET are set correctly
+            and the bridge service is running, then try again.
+          </Banner>
         )}
 
         <Card>

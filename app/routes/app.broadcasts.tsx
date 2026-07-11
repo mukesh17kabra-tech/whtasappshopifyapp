@@ -19,11 +19,13 @@ import prisma from "~/db.server";
 import { queueWhatsappJob } from "~/services/queue.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { session } = await authenticate.admin(request);
+  const { session, billing } = await authenticate.admin(request);
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
 
+  const { hasActivePayment } = await billing.check({ isTest: true });
+
   if (!shop) {
-    return json({ broadcasts: [], templates: [], subscriberCount: 0 });
+    return json({ broadcasts: [], templates: [], subscriberCount: 0, hasActivePayment });
   }
 
   const [broadcasts, templates, subscriberCount] = await Promise.all([
@@ -42,6 +44,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     broadcasts: broadcasts.map((b) => ({ ...b, createdAt: b.createdAt.toISOString() })),
     templates,
     subscriberCount,
+    hasActivePayment,
   });
 }
 
@@ -51,9 +54,17 @@ export async function loader({ request }: LoaderFunctionArgs) {
 // QStash or batch sends across multiple days. This route enqueues in chunks
 // so a single broadcast action itself doesn't run for minutes inline.
 export async function action({ request }: ActionFunctionArgs) {
-  const { session } = await authenticate.admin(request);
+  const { session, billing } = await authenticate.admin(request);
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
   if (!shop) return json({ error: "Shop not found" }, { status: 404 });
+
+  const { hasActivePayment } = await billing.check({ isTest: true });
+  if (!hasActivePayment) {
+    return json(
+      { error: "Marketing broadcasts require the Growth or Pro plan. Upgrade on the Billing page." },
+      { status: 402 },
+    );
+  }
 
   const formData = await request.formData();
   const templateId = String(formData.get("templateId"));
@@ -113,7 +124,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Broadcasts() {
-  const { broadcasts, templates, subscriberCount } = useLoaderData<typeof loader>();
+  const { broadcasts, templates, subscriberCount, hasActivePayment } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -167,7 +178,13 @@ export default function Broadcasts() {
                 <Banner tone="critical">{actionData.error}</Banner>
               )}
 
-              {templates.length === 0 ? (
+              {!hasActivePayment ? (
+                <Banner tone="warning" action={{ content: "View plans", url: "/app/billing" }}>
+                  Marketing broadcasts require the Growth plan or higher.
+                  Order confirmations and shipping updates still work on the
+                  Free plan.
+                </Banner>
+              ) : templates.length === 0 ? (
                 <Banner tone="warning">
                   No marketing templates yet. Create one on the Templates
                   page first.

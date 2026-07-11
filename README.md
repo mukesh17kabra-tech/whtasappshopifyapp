@@ -225,3 +225,21 @@ The Embedded Signup / Meta Business API path has been fully removed. Sending now
 3. Each merchant who installs your Shopify app goes to the "Connect WhatsApp" page and scans their own QR code — no setup needed from you per-merchant beyond the one bridge deployment.
 
 **The tradeoff, worth repeating plainly:** this is not Meta's officially sanctioned way to send WhatsApp messages at scale. It works well for small-to-moderate volume and is what many budget WhatsApp marketing tools actually do under the hood, but numbers can get restricted if usage looks like spam (too fast, too many, no real opt-in). There's no approval process because there's no oversight body approving it — that responsibility now sits with you and your merchants using it sensibly.
+
+## Billing / Paid Plans
+
+Real subscription billing via Shopify's official Billing API — Shopify collects the payment method and handles charging, you never touch card details.
+
+- **Free plan**: popup capture, order confirmations, shipping updates, up to 100 subscribers (the 100 cap isn't enforced in code yet — add a check in the popup's opt-in route if you want to hard-limit it)
+- **Growth ($9.99/mo)** and **Pro ($29.99/mo)**: unlock marketing broadcasts, unlimited subscribers, 7-day free trial on both
+- `app/routes/app.billing.tsx` — pricing page, shows current plan
+- `app/routes/app.billing.subscribe.tsx` — triggers Shopify's subscription confirmation flow
+- Broadcasts (`app.broadcasts.tsx`) are gated behind an active paid plan, checked both in the UI and server-side in the action (so it can't be bypassed by directly posting to the route)
+
+### Before going live — flip `isTest`
+
+Every `billing.check()` and `billing.request()` call currently has `isTest: true`. This means **no real money is ever charged** — required while developing, but you must change this to `false` (or remove the flag) in all three files (`app.billing.tsx`, `app.billing.subscribe.tsx`, `app.broadcasts.tsx`) before submitting to the Shopify App Store or letting real merchants pay. Test this thoroughly with `isTest: true` first — Shopify still shows the full approval flow, it just never bills anyone.
+
+### Adjusting prices/plans
+
+Edit the `billing` block in `app/shopify.server.ts` — amounts, currency, trial length, and interval are all there. Add a third plan by adding another key to `BILLING_PLANS` and a matching entry in the `billing` config object, then add it to `PLAN_DETAILS` in `app.billing.tsx`.

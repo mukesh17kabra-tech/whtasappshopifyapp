@@ -4,9 +4,17 @@ import {
   AppDistribution,
   shopifyApp,
   DeliveryMethod,
+  BillingInterval,
 } from "@shopify/shopify-app-remix/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
+
+// Plan names/prices — shown on the Billing page and used to gate features.
+// Adjust pricing/names to whatever you want to actually charge.
+export const BILLING_PLANS = {
+  GROWTH: "Growth",
+  PRO: "Pro",
+} as const;
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
@@ -17,6 +25,20 @@ const shopify = shopifyApp({
   authPathPrefix: "/auth",
   sessionStorage: new PrismaSessionStorage(prisma),
   distribution: AppDistribution.AppStore,
+  billing: {
+    [BILLING_PLANS.GROWTH]: {
+      amount: 9.99,
+      currencyCode: "USD",
+      interval: BillingInterval.Every30Days,
+      trialDays: 7,
+    },
+    [BILLING_PLANS.PRO]: {
+      amount: 29.99,
+      currencyCode: "USD",
+      interval: BillingInterval.Every30Days,
+      trialDays: 7,
+    },
+  },
   future: {
     unstable_newEmbeddedAuthStrategy: true,
   },
