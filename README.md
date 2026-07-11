@@ -206,3 +206,22 @@ Embedded Signup gives you a long-lived token valid for about 60 days, not perman
 ### Testing this yourself
 
 Since you likely don't have a second real Shopify store handy, you can still test the connect flow on your own dev store — connect your own WhatsApp Business Account through the new flow instead of hardcoding it via env vars, and everything else (broadcasts, templates, opt-outs) should work exactly as before, just reading credentials from your Shop row instead of process.env.
+
+## Reverted: no Meta involvement at all (as requested)
+
+The Embedded Signup / Meta Business API path has been fully removed. Sending now works exclusively through the WhatsApp Bridge (`whatsapp-bridge-service`), which connects via each merchant's real WhatsApp Business number the same way WhatsApp Web does — scan a QR code, no Meta account, no Facebook login, no template approval.
+
+**What changed:**
+- `Shop.whatsappAccessToken`, `whatsappBusinessAccountId`, `whatsappPhoneNumberId` — removed. Replaced with `whatsappBridgeConnected` (boolean) and `whatsappConnectedAt`.
+- `app/services/meta-templates.server.ts` and `app/services/embedded-signup.server.ts` — deleted entirely.
+- `app/routes/app.whatsapp-connect.tsx` — rebuilt: shows a QR code right inside your app's admin (fetched from the bridge service), no external popup, no Facebook login screen.
+- `app/routes/webhooks.whatsapp.inbound.tsx` (the Meta-specific inbound webhook) — deleted. Opt-out/opt-in handling now goes exclusively through `webhooks.whatsapp.bridge-inbound.tsx`.
+- Templates no longer have an approval step — compose one, it's immediately usable for sending.
+- The bridge service (`whatsapp-bridge-service`) is now **multi-tenant**: one WhatsApp session per shop, keyed by shop ID, so each of your app's merchants can connect their own number independently. Sessions persist in `auth_sessions/<shopId>/` — make sure that whole folder sits on a Railway Volume so merchants don't have to rescan their QR code after every restart.
+
+**Setup, in order:**
+1. Deploy `whatsapp-bridge-service` to Railway (see its own README) — this one service handles every merchant's connection.
+2. Set `WHATSAPP_BRIDGE_URL` and `WHATSAPP_BRIDGE_SECRET` in this app's Vercel env vars (same secret on both sides).
+3. Each merchant who installs your Shopify app goes to the "Connect WhatsApp" page and scans their own QR code — no setup needed from you per-merchant beyond the one bridge deployment.
+
+**The tradeoff, worth repeating plainly:** this is not Meta's officially sanctioned way to send WhatsApp messages at scale. It works well for small-to-moderate volume and is what many budget WhatsApp marketing tools actually do under the hood, but numbers can get restricted if usage looks like spam (too fast, too many, no real opt-in). There's no approval process because there's no oversight body approving it — that responsibility now sits with you and your merchants using it sensibly.

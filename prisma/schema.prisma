@@ -36,15 +36,12 @@ model Shop {
   installedAt  DateTime @default(now())
   uninstalled  Boolean  @default(false)
 
-  // Per-merchant WhatsApp Business Account, connected via Meta's Embedded
-  // Signup flow (see app/routes/app.whatsapp-connect.tsx). Each shop sends
-  // through their own WhatsApp number/account, not a shared one — required
-  // for listing this as a real multi-merchant Shopify app.
-  whatsappPhoneNumberId      String?
-  whatsappBusinessAccountId  String?
-  whatsappAccessToken        String?  // long-lived token for this merchant's WABA
-  whatsappDisplayPhoneNumber String?  // human-readable number, for display in the UI
-  whatsappConnectedAt        DateTime?
+  // WhatsApp connection via the bridge service — each merchant scans a QR
+  // code to link their own real WhatsApp Business number, no Meta account,
+  // no template approval. shopId (this row's id) is used as the session key
+  // on the bridge service.
+  whatsappBridgeConnected Boolean   @default(false)
+  whatsappConnectedAt     DateTime?
 
   optins        Optin[]
   ordersTrack   OrderTracking[]

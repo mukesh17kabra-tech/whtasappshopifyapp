@@ -1,26 +1,15 @@
-// WhatsApp sending — per-shop credentials (Embedded Signup) or bridge.
+// WhatsApp sending — entirely via the bridge service (whatsapp-bridge-service),
+// which connects through each merchant's own real WhatsApp Business number
+// (linked by scanning a QR code, same as WhatsApp Web). No Meta Business API,
+// no template approval, no Facebook login anywhere in this flow.
 //
-// Each merchant connects their own WhatsApp Business Account via Meta's
-// Embedded Signup flow (see app/routes/app.whatsapp-connect.tsx). Their
-// phoneNumberId + accessToken are stored on their Shop row and passed into
-// these functions — there is no shared/global WhatsApp account anymore for
-// the Meta path. This is what makes the app usable by many merchants at once
-// rather than funneling everyone through one number.
-//
-// The WhatsApp Bridge path (unofficial, WhatsApp Web-based) remains a
-// single global connection for now — see whatsapp-bridge-service.
-
-export type MetaCredentials = {
-  phoneNumberId: string;
-  accessToken: string;
-};
+// Every send is scoped by shopId, since the bridge holds one session per
+// merchant — see whatsapp-bridge-service/index.js.
 
 type SendResult = { success: boolean; messageId?: string };
 
-const USE_META = process.env.WHATSAPP_PROVIDER !== "bridge";
-const GRAPH_VERSION = "v19.0";
-
 async function sendViaBridge(params: {
+  shopId: string;
   to: string;
   text: string;
   imageUrl?: string | null;
@@ -43,6 +32,7 @@ async function sendViaBridge(params: {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
+        shopId: params.shopId,
         to: params.to,
         text: params.text,
         imageUrl: params.imageUrl || undefined,
@@ -61,150 +51,40 @@ async function sendViaBridge(params: {
   }
 }
 
-async function sendViaMetaTemplate(params: {
-  to: string;
-  templateName: string;
-  variables: Record<string, string>;
-  credentials: MetaCredentials;
-}): Promise<SendResult> {
-  const { to, templateName, variables, credentials } = params;
-
-  const res = await fetch(
-    `https://graph.facebook.com/${GRAPH_VERSION}/${credentials.phoneNumberId}/messages`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${credentials.accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        messaging_product: "whatsapp",
-        to,
-        type: "template",
-        template: {
-          name: templateName,
-          language: { code: "en_US" },
-          ...(Object.keys(variables).length > 0 && {
-            components: [
-              {
-                type: "body",
-                parameters: Object.values(variables).map((v) => ({
-                  type: "text",
-                  text: v,
-                })),
-              },
-            ],
-          }),
-        },
-      }),
-    },
-  );
-
-  const data = await res.json();
-  if (!res.ok) {
-    console.error("WhatsApp API error:", data);
-    return { success: false };
-  }
-  return { success: true, messageId: data.messages?.[0]?.id };
-}
-
-async function sendViaMetaFreeform(params: {
-  to: string;
-  text: string;
-  imageUrl?: string | null;
-  credentials: MetaCredentials;
-}): Promise<SendResult> {
-  const { to, text, imageUrl, credentials } = params;
-
-  const body = imageUrl
-    ? {
-        messaging_product: "whatsapp",
-        to,
-        type: "image",
-        image: { link: imageUrl, caption: text },
-      }
-    : {
-        messaging_product: "whatsapp",
-        to,
-        type: "text",
-        text: { body: text },
-      };
-
-  const res = await fetch(
-    `https://graph.facebook.com/${GRAPH_VERSION}/${credentials.phoneNumberId}/messages`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${credentials.accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    },
-  );
-
-  const data = await res.json();
-  if (!res.ok) {
-    console.error("WhatsApp custom message error:", data);
-    return { success: false };
-  }
-  return { success: true, messageId: data.messages?.[0]?.id };
-}
-
-// Used for order confirmations / shipment updates and approved marketing
-// templates. `credentials` is required for the Meta path — callers must
-// look up the shop's connected WhatsApp account first (see
-// getShopWhatsappCredentials in this file).
+// Used for order confirmations / shipment updates and marketing broadcasts.
+// Since there's no Meta template mechanism anymore, this just renders the
+// variables into a readable line — real formatting comes from the
+// merchant's own composed template text (see template.server.ts), this is
+// only used for the two fixed system flows (order_confirmation, shipment_update).
 export async function sendWhatsappTemplateMessage(params: {
+  shopId: string;
   to: string;
   templateName: string;
   variables: Record<string, string>;
-  credentials?: MetaCredentials | null;
 }): Promise<SendResult> {
-  if (USE_META) {
-    if (!params.credentials) {
-      console.error("No WhatsApp credentials for this shop — connect a WhatsApp Business Account first.");
-      return { success: false };
-    }
-    return sendViaMetaTemplate({ ...params, credentials: params.credentials });
-  }
-
   const text = `[${params.templateName}] ` +
     Object.entries(params.variables)
       .map(([k, v]) => `${k}: ${v}`)
       .join(" | ");
-  return sendViaBridge({ to: params.to, text });
+  return sendViaBridge({ shopId: params.shopId, to: params.to, text });
 }
 
-// Used for in-app composed marketing broadcasts sent as freeform (draft/
-// pending/rejected templates on the Meta path — within the 24h window only).
+// Used for in-app composed marketing broadcasts — the merchant's exact
+// composed text + optional image, sent directly, no approval mechanism.
 export async function sendWhatsappCustomMessage(params: {
+  shopId: string;
   to: string;
   text: string;
   imageUrl?: string | null;
-  credentials?: MetaCredentials | null;
 }): Promise<SendResult> {
-  if (USE_META) {
-    if (!params.credentials) {
-      console.error("No WhatsApp credentials for this shop — connect a WhatsApp Business Account first.");
-      return { success: false };
-    }
-    return sendViaMetaFreeform({ ...params, credentials: params.credentials });
-  }
   return sendViaBridge(params);
 }
 
 // Used for opt-out/opt-in confirmation replies from the inbound webhook.
 export async function sendWhatsappTextMessage(params: {
+  shopId: string;
   to: string;
   text: string;
-  credentials?: MetaCredentials | null;
 }): Promise<SendResult> {
-  if (USE_META) {
-    if (!params.credentials) {
-      console.error("No WhatsApp credentials for this shop — connect a WhatsApp Business Account first.");
-      return { success: false };
-    }
-    return sendViaMetaFreeform({ ...params, credentials: params.credentials });
-  }
   return sendViaBridge(params);
 }

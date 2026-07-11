@@ -6,9 +6,9 @@ const OPT_OUT_KEYWORDS = ["stop", "unsubscribe", "opt out", "optout", "cancel"];
 const OPT_IN_KEYWORDS = ["start", "subscribe", "opt in", "optin"];
 
 // Receives forwarded inbound messages from whatsapp-bridge-service (see its
-// index.js "messages.upsert" handler). Simpler payload than Meta's webhook:
-// just { from: "+91...", text: "..." }. Same opt-out/opt-in logic as the
-// Meta inbound webhook, just a different entry point.
+// index.js "messages.upsert" handler). Payload: { shopId, from: "+91...", text }.
+// shopId scopes this to the correct merchant, since the bridge now runs one
+// session per shop.
 export async function action({ request }: ActionFunctionArgs) {
   const auth = request.headers.get("authorization");
   const expected = `Bearer ${process.env.WHATSAPP_BRIDGE_SECRET}`;
@@ -16,8 +16,8 @@ export async function action({ request }: ActionFunctionArgs) {
     return new Response("Unauthorized", { status: 401 });
   }
 
-  const { from, text } = await request.json();
-  if (!from || !text) {
+  const { shopId, from, text } = await request.json();
+  if (!shopId || !from || !text) {
     return new Response(null, { status: 200 });
   }
 
@@ -27,19 +27,21 @@ export async function action({ request }: ActionFunctionArgs) {
 
   if (isOptOut) {
     await prisma.optin.updateMany({
-      where: { phoneNumber: from, optedOutAt: null },
+      where: { shopId, phoneNumber: from, optedOutAt: null },
       data: { optedOutAt: new Date() },
     });
     await sendWhatsappTextMessage({
+      shopId,
       to: from,
       text: "You've been unsubscribed from offer and order updates. Reply START to opt back in anytime.",
     });
   } else if (isOptIn) {
     await prisma.optin.updateMany({
-      where: { phoneNumber: from, optedOutAt: { not: null } },
+      where: { shopId, phoneNumber: from, optedOutAt: { not: null } },
       data: { optedOutAt: null },
     });
     await sendWhatsappTextMessage({
+      shopId,
       to: from,
       text: "You're re-subscribed! You'll get offer and order updates on WhatsApp again.",
     });

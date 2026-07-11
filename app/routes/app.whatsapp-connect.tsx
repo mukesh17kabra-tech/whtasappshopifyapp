@@ -1,6 +1,6 @@
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation, useActionData } from "@remix-run/react";
-import { useEffect, useCallback, useState } from "react";
+import { useLoaderData, useFetcher } from "@remix-run/react";
+import { useEffect, useState, useCallback } from "react";
 import {
   Page,
   Card,
@@ -11,24 +11,25 @@ import {
   Box,
   InlineStack,
   Badge,
+  Spinner,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
-import { exchangeCodeForToken, getLongLivedToken, subscribeAppToWaba, getPhoneNumberDisplay } from "~/services/embedded-signup.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
 
   return json({
-    connected: Boolean(shop?.whatsappAccessToken && shop?.whatsappPhoneNumberId),
-    displayPhoneNumber: shop?.whatsappDisplayPhoneNumber ?? null,
+    shopId: shop?.id ?? "",
+    connected: shop?.whatsappBridgeConnected ?? false,
     connectedAt: shop?.whatsappConnectedAt?.toISOString() ?? null,
-    metaAppId: process.env.WHATSAPP_APP_ID || "",
-    metaConfigId: process.env.WHATSAPP_EMBEDDED_SIGNUP_CONFIG_ID || "",
   });
 }
 
+// Proxies requests to the bridge service so the merchant's browser never
+// needs the bridge's shared secret — this route holds it server-side and
+// forwards calls scoped to this shop's own session.
 export async function action({ request }: ActionFunctionArgs) {
   const { session } = await authenticate.admin(request);
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
@@ -36,182 +37,122 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const formData = await request.formData();
   const intent = formData.get("intent");
+  const bridgeUrl = process.env.WHATSAPP_BRIDGE_URL;
+  const bridgeSecret = process.env.WHATSAPP_BRIDGE_SECRET;
 
-  if (intent === "disconnect") {
-    await prisma.shop.update({
-      where: { id: shop.id },
-      data: {
-        whatsappPhoneNumberId: null,
-        whatsappBusinessAccountId: null,
-        whatsappAccessToken: null,
-        whatsappDisplayPhoneNumber: null,
-        whatsappConnectedAt: null,
-      },
-    });
-    return json({ success: true, disconnected: true });
+  if (!bridgeUrl || !bridgeSecret) {
+    return json(
+      { error: "WhatsApp bridge isn't configured yet. Set WHATSAPP_BRIDGE_URL and WHATSAPP_BRIDGE_SECRET." },
+      { status: 500 },
+    );
   }
 
-  if (intent === "complete-signup") {
-    const code = String(formData.get("code") ?? "");
-    const wabaId = String(formData.get("wabaId") ?? "");
-    const phoneNumberId = String(formData.get("phoneNumberId") ?? "");
+  const headers = { Authorization: `Bearer ${bridgeSecret}` };
 
-    if (!code || !wabaId || !phoneNumberId) {
-      return json({ error: "Missing signup data — please try connecting again." }, { status: 400 });
+  try {
+    if (intent === "connect") {
+      await fetch(`${bridgeUrl}/connect/${shop.id}`, { method: "POST", headers });
+      return json({ success: true });
     }
 
-    // 1. Exchange the authorization code for a short-lived access token
-    const shortLived = await exchangeCodeForToken(code);
-    if (!shortLived) {
-      return json({ error: "Couldn't exchange authorization code with Meta. Please try again." }, { status: 400 });
+    if (intent === "poll") {
+      const statusRes = await fetch(`${bridgeUrl}/status/${shop.id}`, { headers });
+      const statusData = await statusRes.json();
+
+      let qr = null;
+      if (statusData.status === "qr_ready") {
+        const qrRes = await fetch(`${bridgeUrl}/qr/${shop.id}`, { headers });
+        const qrData = await qrRes.json();
+        qr = qrData.qr ?? null;
+      }
+
+      if (statusData.status === "connected" && !shop.whatsappBridgeConnected) {
+        await prisma.shop.update({
+          where: { id: shop.id },
+          data: { whatsappBridgeConnected: true, whatsappConnectedAt: new Date() },
+        });
+      }
+
+      return json({ status: statusData.status, qr });
     }
 
-    // 2. Exchange that for a long-lived token (valid ~60 days; you'll want a
-    // refresh flow before it expires — see README note on this)
-    const longLived = await getLongLivedToken(shortLived);
-    const accessToken = longLived || shortLived;
+    if (intent === "disconnect") {
+      await fetch(`${bridgeUrl}/disconnect/${shop.id}`, { method: "POST", headers });
+      await prisma.shop.update({
+        where: { id: shop.id },
+        data: { whatsappBridgeConnected: false, whatsappConnectedAt: null },
+      });
+      return json({ success: true, disconnected: true });
+    }
 
-    // 3. Subscribe your app to this WABA's webhooks (required for receiving
-    // message status updates / inbound messages for this merchant's number)
-    await subscribeAppToWaba(wabaId, accessToken);
-
-    // 4. Get the human-readable phone number for display in the UI
-    const displayPhoneNumber = await getPhoneNumberDisplay(phoneNumberId, accessToken);
-
-    await prisma.shop.update({
-      where: { id: shop.id },
-      data: {
-        whatsappBusinessAccountId: wabaId,
-        whatsappPhoneNumberId: phoneNumberId,
-        whatsappAccessToken: accessToken,
-        whatsappDisplayPhoneNumber: displayPhoneNumber,
-        whatsappConnectedAt: new Date(),
-      },
-    });
-
-    return json({ success: true, connected: true });
+    return json({ error: "Unknown action" }, { status: 400 });
+  } catch (err) {
+    console.error("Bridge proxy request failed", err);
+    return json({ error: "Couldn't reach the WhatsApp bridge service. Check it's deployed and running." }, { status: 500 });
   }
-
-  return json({ error: "Unknown action" }, { status: 400 });
 }
 
 export default function WhatsappConnect() {
-  const { connected, displayPhoneNumber, connectedAt, metaAppId, metaConfigId } = useLoaderData<typeof loader>();
-  const actionData = useActionData<typeof action>();
-  const submit = useSubmit();
-  const navigation = useNavigation();
-  const [sdkLoaded, setSdkLoaded] = useState(false);
-  const [signingUp, setSigningUp] = useState(false);
-
-  const isSubmitting = navigation.state === "submitting";
-
-  // Load Facebook's JS SDK once, needed for the Embedded Signup popup
-  useEffect(() => {
-    if (document.getElementById("facebook-jssdk")) {
-      setSdkLoaded(true);
-      return;
-    }
-
-    (window as any).fbAsyncInit = function () {
-      (window as any).FB.init({
-        appId: metaAppId,
-        autoLogAppEvents: true,
-        xfbml: true,
-        version: "v19.0",
-      });
-      setSdkLoaded(true);
-    };
-
-    const script = document.createElement("script");
-    script.id = "facebook-jssdk";
-    script.src = "https://connect.facebook.net/en_US/sdk.js";
-    script.async = true;
-    document.body.appendChild(script);
-  }, [metaAppId]);
-
-  // Listen for Meta's Embedded Signup postMessage events, which carry the
-  // wabaId + phoneNumberId once the merchant finishes picking/creating their
-  // WhatsApp number inside the popup.
-  useEffect(() => {
-    function handleMessage(event: MessageEvent) {
-      if (!event.origin.endsWith("facebook.com")) return;
-
-      try {
-        const data = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
-        if (data.type === "WA_EMBEDDED_SIGNUP" && data.event === "FINISH") {
-          const { phone_number_id, waba_id } = data.data || {};
-          if (phone_number_id && waba_id) {
-            (window as any).__waEmbeddedSignupResult = { phoneNumberId: phone_number_id, wabaId: waba_id };
-          }
-        }
-      } catch {
-        // Not a JSON message we care about — ignore
-      }
-    }
-
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, []);
+  const { connected: initiallyConnected, connectedAt } = useLoaderData<typeof loader>();
+  const fetcher = useFetcher<typeof action>();
+  const [connected, setConnected] = useState(initiallyConnected);
+  const [qr, setQr] = useState<string | null>(null);
+  const [polling, setPolling] = useState(false);
 
   const handleConnect = useCallback(() => {
-    if (!sdkLoaded || !(window as any).FB) {
-      alert("Facebook SDK still loading, please wait a moment and try again.");
-      return;
-    }
-
-    setSigningUp(true);
-    (window as any).__waEmbeddedSignupResult = null;
-
-    (window as any).FB.login(
-      (response: any) => {
-        setSigningUp(false);
-
-        if (response.authResponse && response.authResponse.code) {
-          const code = response.authResponse.code;
-          const result = (window as any).__waEmbeddedSignupResult;
-
-          if (!result) {
-            alert("Signup didn't complete — please make sure you finish selecting or creating a WhatsApp number in the popup.");
-            return;
-          }
-
-          const formData = new FormData();
-          formData.append("intent", "complete-signup");
-          formData.append("code", code);
-          formData.append("wabaId", result.wabaId);
-          formData.append("phoneNumberId", result.phoneNumberId);
-          submit(formData, { method: "post" });
-        } else {
-          alert("WhatsApp connection was cancelled or didn't complete.");
-        }
-      },
-      {
-        config_id: metaConfigId,
-        response_type: "code",
-        override_default_response_type: true,
-        extras: {
-          setup: {},
-          featureType: "",
-          sessionInfoVersion: "3",
-        },
-      },
-    );
-  }, [sdkLoaded, metaConfigId, submit]);
+    const formData = new FormData();
+    formData.append("intent", "connect");
+    fetcher.submit(formData, { method: "post" });
+    setPolling(true);
+  }, [fetcher]);
 
   const handleDisconnect = useCallback(() => {
     const formData = new FormData();
     formData.append("intent", "disconnect");
-    submit(formData, { method: "post" });
-  }, [submit]);
+    fetcher.submit(formData, { method: "post" });
+    setConnected(false);
+    setQr(null);
+    setPolling(false);
+  }, [fetcher]);
+
+  // Poll status every 2s while attempting to connect
+  useEffect(() => {
+    if (!polling) return;
+
+    const interval = setInterval(() => {
+      const formData = new FormData();
+      formData.append("intent", "poll");
+      fetcher.submit(formData, { method: "post" });
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [polling]);
+
+  useEffect(() => {
+    if (fetcher.data && "status" in fetcher.data) {
+      if (fetcher.data.status === "qr_ready" && fetcher.data.qr) {
+        setQr(fetcher.data.qr);
+      }
+      if (fetcher.data.status === "connected") {
+        setConnected(true);
+        setQr(null);
+        setPolling(false);
+      }
+    }
+  }, [fetcher.data]);
 
   return (
     <Page title="Connect WhatsApp">
       <BlockStack gap="400">
-        {actionData && "error" in actionData && actionData.error && (
-          <Banner tone="critical">{actionData.error}</Banner>
-        )}
-        {actionData && "connected" in actionData && actionData.connected && (
-          <Banner tone="success">WhatsApp Business Account connected!</Banner>
+        <Banner tone="info">
+          This links your store's real WhatsApp Business number directly —
+          no Meta Business account, no Facebook login, no template approval.
+          Just scan a QR code with WhatsApp on your phone, the same way you'd
+          link WhatsApp Web.
+        </Banner>
+
+        {fetcher.data && "error" in fetcher.data && fetcher.data.error && (
+          <Banner tone="critical">{fetcher.data.error}</Banner>
         )}
 
         <Card>
@@ -221,7 +162,7 @@ export default function WhatsappConnect() {
                 <InlineStack gap="200" blockAlign="center">
                   <Badge tone="success">Connected</Badge>
                   <Text as="span" variant="bodyMd">
-                    {displayPhoneNumber || "WhatsApp Business Account"}
+                    Your WhatsApp number is linked and ready to send.
                   </Text>
                 </InlineStack>
                 {connectedAt && (
@@ -230,33 +171,65 @@ export default function WhatsappConnect() {
                   </Text>
                 )}
                 <Box>
-                  <Button tone="critical" onClick={handleDisconnect} loading={isSubmitting}>
+                  <Button tone="critical" onClick={handleDisconnect}>
                     Disconnect
                   </Button>
                 </Box>
               </>
+            ) : qr ? (
+              <>
+                <Text as="h2" variant="headingMd">
+                  Scan this QR code
+                </Text>
+                <Text as="p" tone="subdued">
+                  Open WhatsApp on your phone → Settings → Linked Devices →
+                  Link a Device → scan this code.
+                </Text>
+                <Box>
+                  <img src={qr} alt="WhatsApp QR code" style={{ maxWidth: 280, borderRadius: 8, border: "1px solid #ddd" }} />
+                </Box>
+                <InlineStack gap="200" blockAlign="center">
+                  <Spinner size="small" />
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    Waiting for you to scan...
+                  </Text>
+                </InlineStack>
+              </>
             ) : (
               <>
                 <Text as="h2" variant="headingMd">
-                  Connect your WhatsApp Business Account
+                  Connect your WhatsApp number
                 </Text>
                 <Text as="p" tone="subdued">
-                  Sends go out through your own WhatsApp number, not a shared
-                  one. Click below to link an existing WhatsApp Business
-                  Account, or create a new one — Meta walks you through it.
+                  Click below to generate a QR code, then scan it with the
+                  WhatsApp Business app on the phone number you want to send
+                  from.
                 </Text>
                 <Box>
-                  <Button
-                    variant="primary"
-                    onClick={handleConnect}
-                    loading={signingUp || isSubmitting}
-                    disabled={!sdkLoaded}
-                  >
-                    Connect WhatsApp Business Account
+                  <Button variant="primary" onClick={handleConnect} loading={polling && !qr}>
+                    Generate QR code
                   </Button>
                 </Box>
               </>
             )}
+          </BlockStack>
+        </Card>
+
+        <Card>
+          <BlockStack gap="200">
+            <Text as="h3" variant="headingSm">
+              Good to know
+            </Text>
+            <Text as="p" variant="bodySm" tone="subdued">
+              This connects the same way WhatsApp Web does, not through
+              Meta's official Business API — so there's no template approval
+              step, and you can send freeform messages and images right
+              away. The tradeoff: this isn't an officially sanctioned way to
+              automate WhatsApp, so sending too much too fast or to people
+              who haven't opted in risks the number being restricted. Use a
+              dedicated number if you can, and grow your sending volume
+              gradually.
+            </Text>
           </BlockStack>
         </Card>
       </BlockStack>
