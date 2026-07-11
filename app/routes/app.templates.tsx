@@ -77,6 +77,7 @@ export async function action({ request }: ActionFunctionArgs) {
       displayName: template.name,
       category: template.category as "MARKETING" | "UTILITY",
       body: template.body,
+      imageUrl: template.imageUrl,
     });
 
     if (!result.success) {
@@ -160,10 +161,34 @@ export default function Templates() {
   const [category, setCategory] = useState("MARKETING");
   const [imageUrl, setImageUrl] = useState("");
   const [imageUploading, setImageUploading] = useState(false);
+  const [linkUrl, setLinkUrl] = useState("");
+  const [discountCode, setDiscountCode] = useState("");
   const bodyRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const isSaving = navigation.state === "submitting";
+
+  // Inserts literal text (not a {tag}) at the cursor — used for product/
+  // collection links and discount codes, since those are the same for every
+  // recipient in a broadcast rather than per-customer data.
+  const insertText = useCallback(
+    (text: string) => {
+      const el = bodyRef.current;
+      if (!el) {
+        setBody((prev) => `${prev} ${text}`);
+        return;
+      }
+      const start = el.selectionStart ?? body.length;
+      const end = el.selectionEnd ?? body.length;
+      const next = body.slice(0, start) + text + body.slice(end);
+      setBody(next);
+      requestAnimationFrame(() => {
+        el.focus();
+        el.selectionStart = el.selectionEnd = start + text.length;
+      });
+    },
+    [body],
+  );
 
   // Insert a variable tag at the current cursor position in the textarea,
   // rather than always appending to the end.
@@ -189,18 +214,34 @@ export default function Templates() {
   // Uploads the image to our own /api/upload-image route, which stores it
   // and returns a public URL — this is a lightweight image host for template
   // headers, not a Meta/Google integration.
+  const [imageUploadError, setImageUploadError] = useState("");
+
   const handleImageSelect = useCallback(async (file: File) => {
     setImageUploading(true);
+    setImageUploadError("");
     try {
       const formData = new FormData();
       formData.append("file", file);
       const res = await fetch("/api/upload-image", { method: "POST", body: formData });
-      const data = await res.json();
-      if (res.ok && data.url) {
+
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        setImageUploadError("Upload failed — got an unexpected response from the server.");
+        return;
+      }
+
+      if (!res.ok) {
+        setImageUploadError(data.error || "Upload failed.");
+        return;
+      }
+
+      if (data.url) {
         setImageUrl(data.url);
       }
     } catch (err) {
-      console.error("Image upload failed", err);
+      setImageUploadError("Network error — check your connection and try again.");
     } finally {
       setImageUploading(false);
     }
@@ -313,13 +354,9 @@ export default function Templates() {
       <BlockStack gap="400">
         <Banner tone="info">
           Compose your message here, then click <strong>Submit for approval</strong> —
-          this submits it directly to Meta's API for you, no need to visit
-          Business Manager. Approval is usually automatic within minutes to a
-          few hours. Note: templates with an uploaded image header currently
-          still need manual submission in Meta Business Manager (Meta's image
-          upload process for templates needs a separate step not yet wired
-          up here) — text-only templates submit and get approved fully
-          automatically from this page.
+          this submits it directly to Meta's API for you, including the image
+          if you added one. Approval is usually automatic within minutes to
+          a few hours.
         </Banner>
 
         <InlineStack gap="400" align="start" wrap={false}>
@@ -392,6 +429,53 @@ export default function Templates() {
 
                 <BlockStack gap="200">
                   <Text as="p" variant="bodyMd" fontWeight="medium">
+                    Product / Collection link + discount code
+                  </Text>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Paste a product or collection URL from your store, add a
+                    discount code if this offer has one, then click Insert to
+                    drop them into your message. These are the same for every
+                    recipient, so they're inserted as plain text.
+                  </Text>
+                  <InlineStack gap="200" blockAlign="end" wrap>
+                    <Box minWidth="260px">
+                      <TextField
+                        label="Product or collection URL"
+                        labelHidden
+                        placeholder="https://yourstore.com/products/your-product"
+                        value={linkUrl}
+                        onChange={setLinkUrl}
+                        autoComplete="off"
+                      />
+                    </Box>
+                    <Button onClick={() => insertText(linkUrl)} disabled={!linkUrl}>
+                      Insert link
+                    </Button>
+                    <Box minWidth="160px">
+                      <TextField
+                        label="Discount code"
+                        labelHidden
+                        placeholder="WHATSAPP20"
+                        value={discountCode}
+                        onChange={setDiscountCode}
+                        autoComplete="off"
+                      />
+                    </Box>
+                    <Button onClick={() => insertText(discountCode)} disabled={!discountCode}>
+                      Insert code
+                    </Button>
+                  </InlineStack>
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Tip: find the product/collection URL from your Shopify
+                    admin — Products (or Collections) → open the item →
+                    "View" on the storefront, then copy that page's URL.
+                    Create the discount code first under Discounts in your
+                    Shopify admin if you want to offer one.
+                  </Text>
+                </BlockStack>
+
+                <BlockStack gap="200">
+                  <Text as="p" variant="bodyMd" fontWeight="medium">
                     Image (optional)
                   </Text>
                   <input
@@ -417,6 +501,11 @@ export default function Templates() {
                       </>
                     )}
                   </InlineStack>
+                  {imageUploadError && (
+                    <Text as="p" variant="bodySm" tone="critical">
+                      {imageUploadError}
+                    </Text>
+                  )}
                 </BlockStack>
 
                 <Button

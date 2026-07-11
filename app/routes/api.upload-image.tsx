@@ -7,7 +7,19 @@ import { authenticate } from "~/shopify.server";
 // project is on Vercel — just add the Blob integration in your Vercel
 // project dashboard to get a BLOB_READ_WRITE_TOKEN).
 export async function action({ request }: ActionFunctionArgs) {
-  await authenticate.admin(request);
+  try {
+    await authenticate.admin(request);
+  } catch (err) {
+    // authenticate.admin throws a redirect Response when the session is
+    // missing/expired. Returning that raw breaks the client's res.json()
+    // call silently (this was the actual upload bug) — return proper JSON
+    // instead so the UI can show a real error.
+    console.error("Auth failed on image upload", err);
+    return Response.json(
+      { error: "Session expired — please reload the app and try again." },
+      { status: 401 },
+    );
+  }
 
   const formData = await request.formData();
   const file = formData.get("file") as File | null;
@@ -25,6 +37,14 @@ export async function action({ request }: ActionFunctionArgs) {
     return Response.json({ error: "Image must be under 5MB" }, { status: 400 });
   }
 
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    console.error("BLOB_READ_WRITE_TOKEN is not set");
+    return Response.json(
+      { error: "Image storage isn't configured yet — add the Blob integration in Vercel and set BLOB_READ_WRITE_TOKEN." },
+      { status: 500 },
+    );
+  }
+
   try {
     const blob = await put(`template-images/${Date.now()}-${file.name}`, file, {
       access: "public",
@@ -33,6 +53,6 @@ export async function action({ request }: ActionFunctionArgs) {
     return Response.json({ url: blob.url });
   } catch (err) {
     console.error("Image upload failed", err);
-    return Response.json({ error: "Upload failed" }, { status: 500 });
+    return Response.json({ error: `Upload failed: ${err instanceof Error ? err.message : String(err)}` }, { status: 500 });
   }
 }

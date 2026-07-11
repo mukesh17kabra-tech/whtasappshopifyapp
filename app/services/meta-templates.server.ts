@@ -43,21 +43,70 @@ function toMetaTemplateName(displayName: string): string {
   );
 }
 
+// Uploads an image to Meta's Resumable Upload API to get a "header handle" —
+// required when submitting a template whose header is an image. This is a
+// separate flow from sending a regular message with an image link; template
+// headers specifically need this handle at submission time.
+// Docs: https://developers.facebook.com/docs/graph-api/guides/upload
+async function getMetaHeaderHandle(imageUrl: string): Promise<string | null> {
+  const appId = process.env.WHATSAPP_APP_ID;
+  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+  if (!appId || !accessToken) {
+    console.error("WHATSAPP_APP_ID not set — required for image template headers");
+    return null;
+  }
+
+  try {
+    const imageRes = await fetch(imageUrl);
+    if (!imageRes.ok) return null;
+    const buffer = Buffer.from(await imageRes.arrayBuffer());
+    const contentType = imageRes.headers.get("content-type") || "image/jpeg";
+
+    const sessionRes = await fetch(
+      `https://graph.facebook.com/${GRAPH_VERSION}/${appId}/uploads?file_length=${buffer.length}&file_type=${encodeURIComponent(contentType)}&access_token=${accessToken}`,
+      { method: "POST" },
+    );
+    const sessionData = await sessionRes.json();
+    if (!sessionRes.ok || !sessionData.id) {
+      console.error("Meta upload session creation failed", sessionData);
+      return null;
+    }
+
+    const uploadRes = await fetch(
+      `https://graph.facebook.com/${GRAPH_VERSION}/${sessionData.id}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `OAuth ${accessToken}`,
+          file_offset: "0",
+        },
+        body: buffer,
+      },
+    );
+    const uploadData = await uploadRes.json();
+    if (!uploadRes.ok || !uploadData.h) {
+      console.error("Meta file upload failed", uploadData);
+      return null;
+    }
+
+    return uploadData.h as string;
+  } catch (err) {
+    console.error("getMetaHeaderHandle failed", err);
+    return null;
+  }
+}
+
 export type SubmitTemplateResult =
   | { success: true; metaTemplateId: string; metaTemplateName: string; status: string }
   | { success: false; error: string };
 
-// Submits a template to Meta for approval. Note: this supports TEXT-only
-// templates automatically. Templates with an image header still need Meta's
-// "sample media handle" upload flow (a separate resumable upload API), which
-// isn't wired up here yet — those currently still need manual submission via
-// Business Manager if you want the image to be part of the approved
-// template itself, OR you can send the image via sendWhatsappCustomMessage's
-// freeform path within the 24h window instead of as a template header.
+// Submits a template to Meta for approval, including an image header if
+// provided (via Meta's Resumable Upload API to get a header handle first).
 export async function submitMetaTemplate(params: {
   displayName: string;
   category: "MARKETING" | "UTILITY";
   body: string;
+  imageUrl?: string | null;
 }): Promise<SubmitTemplateResult> {
   const businessAccountId = process.env.WHATSAPP_BUSINESS_ACCOUNT_ID;
   if (!businessAccountId || !process.env.WHATSAPP_ACCESS_TOKEN) {
@@ -67,17 +116,33 @@ export async function submitMetaTemplate(params: {
   const { metaBody, variableKeys } = convertToMetaPlaceholders(params.body);
   const metaTemplateName = toMetaTemplateName(params.displayName);
 
-  const components: any[] = [
-    {
-      type: "BODY",
-      text: metaBody,
-      ...(variableKeys.length > 0 && {
-        example: {
-          body_text: [variableKeys.map((k) => sampleFor(k))],
-        },
-      }),
-    },
-  ];
+  const components: any[] = [];
+
+  if (params.imageUrl) {
+    const handle = await getMetaHeaderHandle(params.imageUrl);
+    if (!handle) {
+      return {
+        success: false,
+        error:
+          "Couldn't upload the image to Meta for template approval. Check WHATSAPP_APP_ID is set correctly, or remove the image and submit as text-only.",
+      };
+    }
+    components.push({
+      type: "HEADER",
+      format: "IMAGE",
+      example: { header_handle: [handle] },
+    });
+  }
+
+  components.push({
+    type: "BODY",
+    text: metaBody,
+    ...(variableKeys.length > 0 && {
+      example: {
+        body_text: [variableKeys.map((k) => sampleFor(k))],
+      },
+    }),
+  });
 
   try {
     const res = await fetch(
