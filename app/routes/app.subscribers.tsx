@@ -13,12 +13,34 @@ import {
   Button,
   Banner,
   Box,
+  Select,
 } from "@shopify/polaris";
 import { useState, useCallback, useRef, useEffect } from "react";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
 
 const PAGE_SIZE = 25;
+
+// Common countries with their dial code and expected local-number digit
+// length (excluding the dial code), used to catch a country/number mismatch
+// immediately rather than silently saving something wrong. Not exhaustive —
+// covers the countries most likely to matter for this app's users; add more
+// as needed.
+const COUNTRIES = [
+  { name: "India", iso: "IN", dialCode: "91", minLen: 10, maxLen: 10 },
+  { name: "United States / Canada", iso: "US", dialCode: "1", minLen: 10, maxLen: 10 },
+  { name: "United Kingdom", iso: "GB", dialCode: "44", minLen: 10, maxLen: 10 },
+  { name: "United Arab Emirates", iso: "AE", dialCode: "971", minLen: 9, maxLen: 9 },
+  { name: "Australia", iso: "AU", dialCode: "61", minLen: 9, maxLen: 9 },
+  { name: "Singapore", iso: "SG", dialCode: "65", minLen: 8, maxLen: 8 },
+  { name: "Pakistan", iso: "PK", dialCode: "92", minLen: 10, maxLen: 10 },
+  { name: "Bangladesh", iso: "BD", dialCode: "880", minLen: 10, maxLen: 10 },
+  { name: "Nepal", iso: "NP", dialCode: "977", minLen: 10, maxLen: 10 },
+  { name: "Saudi Arabia", iso: "SA", dialCode: "966", minLen: 9, maxLen: 9 },
+  { name: "Germany", iso: "DE", dialCode: "49", minLen: 10, maxLen: 11 },
+  { name: "France", iso: "FR", dialCode: "33", minLen: 9, maxLen: 9 },
+  { name: "Other (enter full number with country code)", iso: "OTHER", dialCode: "", minLen: 6, maxLen: 14 },
+];
 
 // Basic E.164-ish check: + followed by 8-15 digits. Same rule used on the
 // storefront popup's opt-in route, kept consistent here.
@@ -62,15 +84,43 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ success: true });
   }
 
-  if (intent === "add-manual") {
-    const rawPhone = String(formData.get("phoneNumber") ?? "");
-    const phoneNumber = normalizePhone(rawPhone);
+  if (intent === "delete") {
+    const id = String(formData.get("id"));
+    const optin = await prisma.optin.findUnique({ where: { id } });
+    if (!optin || optin.shopId !== shop.id) {
+      return json({ error: "Not found" }, { status: 404 });
+    }
+    await prisma.optin.delete({ where: { id } });
+    return json({ success: true });
+  }
 
-    if (!phoneNumber) {
+  if (intent === "add-manual") {
+    const dialCode = String(formData.get("dialCode") ?? "");
+    const localNumber = String(formData.get("localNumber") ?? "").replace(/\D/g, "");
+    const countryName = String(formData.get("countryName") ?? "");
+    const minLen = Number(formData.get("minLen") ?? 6);
+    const maxLen = Number(formData.get("maxLen") ?? 14);
+    const isOther = dialCode === "";
+
+    if (!localNumber) {
+      return json({ error: "Enter a phone number." }, { status: 400 });
+    }
+
+    if (localNumber.length < minLen || localNumber.length > maxLen) {
       return json(
-        { error: `"${rawPhone}" doesn't look like a valid number. Include the country code, e.g. +919876543210.` },
+        {
+          error: isOther
+            ? `That doesn't look like a complete number with country code — check the digits and try again.`
+            : `That number has ${localNumber.length} digits, but ${countryName} numbers should have ${minLen === maxLen ? minLen : `${minLen}-${maxLen}`} digits (not counting the country code). Double check the number or country selected.`,
+        },
         { status: 400 },
       );
+    }
+
+    const phoneNumber = isOther ? `+${localNumber}` : `+${dialCode}${localNumber}`;
+
+    if (!isValidPhone(phoneNumber)) {
+      return json({ error: `"${phoneNumber}" doesn't look like a valid phone number.` }, { status: 400 });
     }
 
     await prisma.optin.upsert({
@@ -194,7 +244,8 @@ export default function Subscribers() {
   const navigation = useNavigation();
   const [, setSearchParams] = useSearchParams();
   const [query, setQuery] = useState(search);
-  const [manualPhone, setManualPhone] = useState("");
+  const [countryIndex, setCountryIndex] = useState("0"); // default India
+  const [localNumber, setLocalNumber] = useState("");
   const [csvFileName, setCsvFileName] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const submit = useSubmit();
@@ -209,13 +260,19 @@ export default function Subscribers() {
     [setSearchParams],
   );
 
+  const selectedCountry = COUNTRIES[Number(countryIndex)];
+
   const handleAddManual = useCallback(() => {
     const formData = new FormData();
     formData.append("intent", "add-manual");
-    formData.append("phoneNumber", manualPhone);
+    formData.append("dialCode", selectedCountry.dialCode);
+    formData.append("localNumber", localNumber);
+    formData.append("countryName", selectedCountry.name);
+    formData.append("minLen", String(selectedCountry.minLen));
+    formData.append("maxLen", String(selectedCountry.maxLen));
     submit(formData, { method: "post" });
-    setManualPhone("");
-  }, [manualPhone, submit]);
+    setLocalNumber("");
+  }, [selectedCountry, localNumber, submit]);
 
   const handleCsvSelect = useCallback(
     (file: File) => {
@@ -246,7 +303,10 @@ export default function Subscribers() {
     o.source,
     new Date(o.consentAt).toLocaleDateString(),
     o.optedOutAt ? "Opted out" : "Active",
-    <ToggleButton key={o.id} id={o.id} optedOut={Boolean(o.optedOutAt)} />,
+    <InlineStack key={`${o.id}-actions`} gap="200">
+      <ToggleButton id={o.id} optedOut={Boolean(o.optedOutAt)} />
+      <DeleteButton id={o.id} />
+    </InlineStack>,
   ]);
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
@@ -278,29 +338,41 @@ export default function Subscribers() {
             )}
 
             <InlineStack gap="400" align="start" wrap>
-              <Box minWidth="300px">
+              <Box minWidth="340px">
                 <BlockStack gap="200">
                   <Text as="p" variant="bodyMd" fontWeight="medium">
                     Add one number
                   </Text>
-                  <InlineStack gap="200">
+                  <InlineStack gap="200" blockAlign="end">
                     <Box minWidth="220px">
+                      <Select
+                        label="Country"
+                        options={COUNTRIES.map((c, i) => ({
+                          label: c.dialCode ? `${c.name} (+${c.dialCode})` : c.name,
+                          value: String(i),
+                        }))}
+                        value={countryIndex}
+                        onChange={setCountryIndex}
+                      />
+                    </Box>
+                    <Box minWidth="140px">
                       <TextField
-                        label="Phone number"
-                        labelHidden
-                        placeholder="+919876543210"
-                        value={manualPhone}
-                        onChange={setManualPhone}
+                        label={selectedCountry.dialCode ? "Phone number" : "Full number with country code"}
+                        placeholder={selectedCountry.dialCode ? "9876543210" : "+919876543210"}
+                        prefix={selectedCountry.dialCode ? `+${selectedCountry.dialCode}` : undefined}
+                        value={localNumber}
+                        onChange={setLocalNumber}
                         autoComplete="off"
                       />
                     </Box>
-                    <Button onClick={handleAddManual} loading={isSubmitting} disabled={!manualPhone}>
+                    <Button onClick={handleAddManual} loading={isSubmitting} disabled={!localNumber}>
                       Add
                     </Button>
                   </InlineStack>
                   <Text as="p" variant="bodySm" tone="subdued">
-                    Include the country code with a leading +, e.g.
-                    +919876543210 for India.
+                    {selectedCountry.dialCode
+                      ? `Enter just the local number — the +${selectedCountry.dialCode} country code is added automatically. We'll flag it if the digit count doesn't match ${selectedCountry.name}.`
+                      : "Enter the complete number including its country code, starting with +."}
                   </Text>
                 </BlockStack>
               </Box>
@@ -405,6 +477,31 @@ function ToggleButton({ id, optedOut }: { id: string; optedOut: boolean }) {
   return (
     <Button variant="plain" tone={optedOut ? undefined : "critical"} onClick={handleClick}>
       {optedOut ? "Re-subscribe" : "Opt out"}
+    </Button>
+  );
+}
+
+function DeleteButton({ id }: { id: string }) {
+  const submit = useSubmit();
+  const [confirming, setConfirming] = useState(false);
+
+  const handleClick = useCallback(() => {
+    if (!confirming) {
+      setConfirming(true);
+      // Auto-reset the confirm state after a few seconds so a stray later
+      // click doesn't delete something unintended.
+      setTimeout(() => setConfirming(false), 4000);
+      return;
+    }
+    const formData = new FormData();
+    formData.append("intent", "delete");
+    formData.append("id", id);
+    submit(formData, { method: "post" });
+  }, [confirming, id, submit]);
+
+  return (
+    <Button variant="plain" tone="critical" onClick={handleClick}>
+      {confirming ? "Click again to confirm" : "Delete"}
     </Button>
   );
 }
