@@ -11,7 +11,8 @@ import {
   List,
   Banner,
 } from "@shopify/polaris";
-import { authenticate, BILLING_PLANS } from "~/shopify.server";
+import { authenticate } from "~/shopify.server";
+import { BILLING_PLANS } from "~/billing-plans";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { billing } = await authenticate.admin(request);
