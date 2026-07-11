@@ -42,8 +42,22 @@ export async function loader({ request }: LoaderFunctionArgs) {
     prisma.optin.count({ where: { shopId: shop.id, optedOutAt: null } }),
   ]);
 
+  // Look up all templates referenced by past broadcasts (not just current
+  // marketing ones) so history shows readable names even for templates that
+  // may have since been deleted or changed category.
+  const templateIds = [...new Set(broadcasts.map((b) => b.templateId))];
+  const templateNames = await prisma.template.findMany({
+    where: { id: { in: templateIds } },
+    select: { id: true, name: true },
+  });
+  const templateNameMap = Object.fromEntries(templateNames.map((t) => [t.id, t.name]));
+
   return json({
-    broadcasts: broadcasts.map((b) => ({ ...b, createdAt: b.createdAt.toISOString() })),
+    broadcasts: broadcasts.map((b) => ({
+      ...b,
+      createdAt: b.createdAt.toISOString(),
+      templateName: templateNameMap[b.templateId] ?? "(deleted template)",
+    })),
     templates,
     subscriberCount,
     hasActivePayment: effectivelyPaid,
@@ -114,11 +128,9 @@ export async function action({ request }: ActionFunctionArgs) {
       where: { id: broadcast.id },
       data: { status: "failed" },
     });
+    const detail = err instanceof Error ? err.message : String(err);
     return json(
-      {
-        error:
-          "Couldn't queue the broadcast — check QSTASH_TOKEN and SHOPIFY_APP_URL are set correctly in your environment variables.",
-      },
+      { error: `Couldn't queue the broadcast: ${detail}` },
       { status: 500 },
     );
   }
@@ -150,7 +162,7 @@ export default function Broadcasts() {
 
   const rows = broadcasts.map((b) => [
     b.id.slice(0, 8),
-    b.templateId,
+    b.templateName,
     <Badge
       key={b.id}
       tone={

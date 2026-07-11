@@ -28,9 +28,23 @@ export type WhatsappJob =
     };
 
 export async function queueWhatsappJob(job: WhatsappJob) {
-  await qstash.publishJSON({
-    url: JOB_ENDPOINT,
-    body: job,
-    retries: 3,
-  });
+  if (!process.env.QSTASH_TOKEN) {
+    throw new Error("QSTASH_TOKEN is not set");
+  }
+  if (!process.env.SHOPIFY_APP_URL || !process.env.SHOPIFY_APP_URL.startsWith("http")) {
+    throw new Error(`SHOPIFY_APP_URL is not set or invalid: "${process.env.SHOPIFY_APP_URL}"`);
+  }
+
+  try {
+    await qstash.publishJSON({
+      url: JOB_ENDPOINT,
+      body: job,
+      retries: 3,
+    });
+  } catch (err) {
+    // Re-throw with the actual QStash error message attached, instead of a
+    // generic failure — this is what shows up in Vercel's function logs.
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`QStash publish failed: ${detail}`);
+  }
 }
