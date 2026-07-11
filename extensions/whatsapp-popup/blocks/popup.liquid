@@ -1,0 +1,107 @@
+{% comment %}
+  WhatsApp Offer Popup — App Block
+  Merchant adds this via Theme Editor > App Embeds.
+  Calls the app's proxy route (/apps/whatsapp-offers/optin) to save the number.
+  Update the proxy path below to match what you configure in shopify.app.toml.
+{% endcomment %}
+
+<div id="wa-optin-popup" class="wa-optin-popup" style="display:none;">
+  <div class="wa-optin-popup__box">
+    <button type="button" class="wa-optin-popup__close" aria-label="Close">&times;</button>
+    <h3>{{ block.settings.heading | default: "Get offers on WhatsApp" }}</h3>
+    <p>{{ block.settings.subheading | default: "Share your WhatsApp number to get offer alerts and order tracking updates." }}</p>
+    <form id="wa-optin-form">
+      <input type="tel" id="wa-phone" name="phone" placeholder="+91 98765 43210" required />
+      <label class="wa-optin-consent">
+        <input type="checkbox" id="wa-consent" required />
+        I agree to receive offers and order updates on WhatsApp
+      </label>
+      <button type="submit">Notify me on WhatsApp</button>
+      <p class="wa-optin-status" id="wa-optin-status"></p>
+    </form>
+  </div>
+</div>
+
+<script>
+  (function () {
+    var popup = document.getElementById('wa-optin-popup');
+    var form = document.getElementById('wa-optin-form');
+    var status = document.getElementById('wa-optin-status');
+    var closeBtn = popup.querySelector('.wa-optin-popup__close');
+    var STORAGE_KEY = 'wa_optin_dismissed';
+
+    // Show popup once per session unless already dismissed/submitted
+    if (!sessionStorage.getItem(STORAGE_KEY)) {
+      setTimeout(function () {
+        popup.style.display = 'flex';
+      }, {{ block.settings.delay_ms | default: 3000 }});
+    }
+
+    closeBtn.addEventListener('click', function () {
+      popup.style.display = 'none';
+      sessionStorage.setItem(STORAGE_KEY, '1');
+    });
+
+    form.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      var phone = document.getElementById('wa-phone').value.trim();
+      var consent = document.getElementById('wa-consent').checked;
+
+      status.textContent = 'Saving...';
+
+      try {
+        var res = await fetch('/apps/whatsapp-offers/optin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phoneNumber: phone, consent: consent }),
+        });
+        var data = await res.json();
+
+        if (res.ok) {
+          status.textContent = "You're in! We'll message you on WhatsApp.";
+          sessionStorage.setItem(STORAGE_KEY, '1');
+          setTimeout(function () { popup.style.display = 'none'; }, 1500);
+        } else {
+          status.textContent = data.error || 'Something went wrong.';
+        }
+      } catch (err) {
+        status.textContent = 'Network error, please try again.';
+      }
+    });
+  })();
+</script>
+
+<style>
+  .wa-optin-popup {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+    z-index: 9999; align-items: center; justify-content: center;
+  }
+  .wa-optin-popup__box {
+    background: #fff; border-radius: 12px; padding: 24px; max-width: 360px;
+    width: 90%; position: relative; text-align: center;
+  }
+  .wa-optin-popup__close {
+    position: absolute; top: 8px; right: 12px; border: none; background: none;
+    font-size: 22px; cursor: pointer;
+  }
+  #wa-optin-form input[type="tel"] {
+    width: 100%; padding: 10px; margin: 12px 0; border: 1px solid #ccc; border-radius: 6px;
+  }
+  .wa-optin-consent { display: flex; align-items: center; gap: 8px; font-size: 12px; text-align: left; margin-bottom: 12px; }
+  #wa-optin-form button[type="submit"] {
+    width: 100%; padding: 10px; background: #25D366; color: #fff; border: none;
+    border-radius: 6px; font-weight: 600; cursor: pointer;
+  }
+</style>
+
+{% schema %}
+{
+  "name": "WhatsApp Offer Popup",
+  "target": "body",
+  "settings": [
+    { "type": "text", "id": "heading", "label": "Heading" },
+    { "type": "text", "id": "subheading", "label": "Subheading" },
+    { "type": "number", "id": "delay_ms", "label": "Delay before showing (ms)", "default": 3000 }
+  ]
+}
+{% endschema %}

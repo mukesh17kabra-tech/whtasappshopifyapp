@@ -1,0 +1,111 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")      // Neon pooled connection string
+  directUrl = env("DIRECT_URL")        // Neon direct connection, used for migrations
+}
+
+// ---------- Required by @shopify/shopify-app-session-storage-prisma ----------
+model Session {
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+}
+
+// ---------- App-specific models ----------
+
+model Shop {
+  id           String   @id @default(cuid())
+  shopDomain   String   @unique
+  installedAt  DateTime @default(now())
+  uninstalled  Boolean  @default(false)
+
+  optins        Optin[]
+  ordersTrack   OrderTracking[]
+  templates     Template[]
+  broadcasts    Broadcast[]
+  messageLogs   MessageLog[]
+}
+
+model Optin {
+  id           String    @id @default(cuid())
+  shop         Shop      @relation(fields: [shopId], references: [id])
+  shopId       String
+  phoneNumber  String    // E.164 format, e.g. +919876543210
+  consentAt    DateTime  @default(now())
+  source       String    // "popup" | "checkout" | "manual"
+  optedOutAt   DateTime?
+
+  @@unique([shopId, phoneNumber])
+  @@index([shopId])
+}
+
+model OrderTracking {
+  id               String   @id @default(cuid())
+  shop             Shop     @relation(fields: [shopId], references: [id])
+  shopId           String
+  shopifyOrderId   String
+  phoneNumber      String
+  status           String   // "confirmed" | "shipped" | "out_for_delivery" | "delivered"
+  trackingUrl      String?
+  lastTemplateSent String?
+  updatedAt        DateTime @updatedAt
+
+  @@unique([shopId, shopifyOrderId])
+  @@index([shopId, phoneNumber])
+}
+
+model Template {
+  id                 String   @id @default(cuid())
+  shop               Shop     @relation(fields: [shopId], references: [id])
+  shopId             String
+  name               String
+  whatsappTemplateId String   // Meta/BSP-approved template ID
+  category           String   // "MARKETING" | "UTILITY"
+  status             String   @default("pending") // pending | approved | rejected
+  createdAt          DateTime @default(now())
+
+  @@index([shopId])
+}
+
+model Broadcast {
+  id              String   @id @default(cuid())
+  shop            Shop     @relation(fields: [shopId], references: [id])
+  shopId          String
+  templateId      String
+  status          String   @default("queued") // queued | sending | done | failed
+  totalRecipients Int      @default(0)
+  sentCount       Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  @@index([shopId])
+}
+
+model MessageLog {
+  id                String   @id @default(cuid())
+  shop              Shop     @relation(fields: [shopId], references: [id])
+  shopId            String
+  phoneNumber       String
+  templateUsed      String
+  status            String   // "sent" | "delivered" | "read" | "failed"
+  providerMessageId String?
+  sentAt            DateTime @default(now())
+
+  @@index([shopId, phoneNumber])
+}
