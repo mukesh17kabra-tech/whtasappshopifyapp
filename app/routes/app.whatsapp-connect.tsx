@@ -129,6 +129,10 @@ export default function WhatsappConnect() {
   }, [polling]);
 
   useEffect(() => {
+    if (fetcher.data && "error" in fetcher.data && fetcher.data.error) {
+      // Stop the spinner and show the real error instead of spinning forever
+      setPolling(false);
+    }
     if (fetcher.data && "status" in fetcher.data) {
       if (fetcher.data.status === "qr_ready" && fetcher.data.qr) {
         setQr(fetcher.data.qr);
