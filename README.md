@@ -1,25 +1,37 @@
 # Shopify WhatsApp Offers & Tracking App
 
-## What's included in this scaffold
+This is now a **complete, standalone Remix app** ready to deploy directly — you do NOT need to run `shopify app init` separately and merge files. Everything Remix and Shopify require (root layout, entry files, auth routes, vite/tsconfig config) is included.
 
+## What's included
+
+- `app/root.tsx`, `app/entry.server.tsx` — Remix's required root layout and server entry point
+- `app/routes/auth.$.tsx`, `app/routes/auth.login/route.tsx` — Shopify OAuth install/login flow
+- `vite.config.ts`, `tsconfig.json` — build configuration
+- `shopify.app.toml` — app config (client ID, scopes, webhooks, app proxy) used by the Shopify CLI
 - `app/db.server.ts` — Prisma client using the Neon serverless driver adapter (avoids connection exhaustion across Vercel's serverless invocations)
 - `prisma/schema.prisma` — Session table (required by Shopify auth) + app tables: Shop, Optin, OrderTracking, Template, Broadcast, MessageLog
 - `app/shopify.server.ts` — Shopify app config, Prisma-backed session storage, webhook registration
 - `app/routes/webhooks.orders.create.tsx` — fast-ack webhook handler; writes to DB and enqueues a background job instead of sending WhatsApp inline (avoids Vercel/Shopify timeout limits)
+- `app/routes/webhooks.fulfillments.update.tsx` — same pattern for shipment tracking updates
+- `app/routes/webhooks.app.uninstalled.tsx` — cleans up session data when a merchant uninstalls
+- `app/routes/webhooks.whatsapp.inbound.tsx` — handles WhatsApp opt-out/opt-in replies (STOP/START)
 - `app/services/queue.server.ts` + `app/routes/api.jobs.send-whatsapp.tsx` — Upstash QStash job queue + worker route that performs the actual WhatsApp API call
 - `app/services/whatsapp.server.ts` — thin wrapper around the WhatsApp send call (currently wired for Meta's Cloud API directly — swap for Gupshup/Interakt/WATI if you prefer a BSP)
 - `app/routes/api.optin.tsx` — public App Proxy route the storefront popup calls to save a phone number opt-in
 - `extensions/whatsapp-popup/blocks/popup.liquid` — Theme App Extension block: the actual popup shown on the storefront
-- `vercel.json` — function timeout config
+- `app/routes/app.tsx` + `app._index/broadcasts/subscribers/templates.tsx` — full Polaris admin dashboard
+- `vercel.json` — minimal deploy config
 
 ## Setup steps
 
-1. **Create the Shopify app**
+1. **Install the Shopify CLI (needed for `shopify.app.toml` linking and theme extension deploy, not for the app itself)**
    ```
    npm install -g @shopify/cli
-   shopify app init
    ```
-   Then merge this scaffold's `app/`, `prisma/`, `extensions/` folders into the generated project (the CLI generates additional boilerplate — routes for `app._index.tsx`, `auth.$.tsx`, etc. — that isn't duplicated here).
+2. **Create your app in Shopify Partners**
+   - Go to partners.shopify.com → Apps → Create app
+   - Copy the Client ID into `shopify.app.toml` (`client_id = "..."`) and into your `SHOPIFY_API_KEY` env var
+   - Copy the Client Secret into `SHOPIFY_API_SECRET`
 
 2. **Configure App Proxy** in `shopify.app.toml`:
    ```toml
