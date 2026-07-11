@@ -1,7 +1,8 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { Receiver } from "@upstash/qstash";
 import prisma from "~/db.server";
-import { sendWhatsappTemplateMessage } from "~/services/whatsapp.server";
+import { sendWhatsappTemplateMessage, sendWhatsappCustomMessage } from "~/services/whatsapp.server";
+import { renderTemplateBody } from "~/services/template.server";
 import type { WhatsappJob } from "~/services/queue.server";
 
 const receiver = new Receiver({
@@ -72,12 +73,35 @@ export async function action({ request }: ActionFunctionArgs) {
       templateName = job.templateId;
     }
 
+    let result;
 
-    const result = await sendWhatsappTemplateMessage({
-      to: job.phoneNumber,
-      templateName,
-      variables,
-    });
+    if (job.type === "broadcast_message") {
+      // In-app composed template: render {variables} into the body and send
+      // as freeform text/image rather than through Meta's approved-template
+      // mechanism. See compliance note on the Templates admin page.
+      const template = await prisma.template.findUnique({
+        where: { id: job.templateId },
+      });
+
+      if (!template) {
+        throw new Error(`Template ${job.templateId} not found`);
+      }
+
+      const renderedText = renderTemplateBody(template.body, {});
+      result = await sendWhatsappCustomMessage({
+        to: job.phoneNumber,
+        text: renderedText,
+        imageUrl: template.imageUrl,
+      });
+      templateName = template.name;
+    } else {
+      result = await sendWhatsappTemplateMessage({
+        to: job.phoneNumber,
+        templateName,
+        variables,
+      });
+    }
+
 
     await prisma.messageLog.create({
       data: {

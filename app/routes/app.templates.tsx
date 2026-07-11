@@ -1,22 +1,39 @@
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useSubmit, useNavigation } from "@remix-run/react";
-import { useState, useCallback } from "react";
+import { useCallback, useRef, useState } from "react";
 import {
   Page,
   Card,
   DataTable,
   Text,
   BlockStack,
+  InlineStack,
   TextField,
   Select,
   Button,
   Banner,
   Badge,
   EmptyState,
-  InlineStack,
+  Thumbnail,
+  Box,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
+
+// Variables a merchant can insert into a template body. These get substituted
+// with real order/customer data at send time (see services/template.server.ts).
+const ORDER_VARIABLES = [
+  { label: "First Name", tag: "{first_name}" },
+  { label: "Last Name", tag: "{last_name}" },
+  { label: "Order ID", tag: "{order_id}" },
+  { label: "Order Number", tag: "{order_number}" },
+  { label: "Order Date", tag: "{order_date}" },
+  { label: "Order URL", tag: "{order_url}" },
+  { label: "Order Total", tag: "{order_total}" },
+  { label: "Tracking Number", tag: "{tracking_number}" },
+  { label: "Tracking Company", tag: "{tracking_company}" },
+  { label: "Tracking URL", tag: "{tracking_url}" },
+];
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
@@ -49,24 +66,25 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   const name = String(formData.get("name") ?? "").trim();
-  const whatsappTemplateId = String(formData.get("whatsappTemplateId") ?? "").trim();
+  const body = String(formData.get("body") ?? "").trim();
   const category = String(formData.get("category") ?? "UTILITY");
+  const imageUrl = String(formData.get("imageUrl") ?? "").trim() || null;
 
-  if (!name || !whatsappTemplateId) {
-    return json({ error: "Name and template ID are required" }, { status: 400 });
+  if (!name || !body) {
+    return json({ error: "Name and message body are required" }, { status: 400 });
   }
 
   await prisma.template.create({
     data: {
       shopId: shop.id,
       name,
-      whatsappTemplateId,
+      body,
       category,
-      // Marked "approved" here on the assumption the merchant only registers
-      // a template after Meta/their BSP has actually approved it. If you want
-      // to track pending review state, wire this up to your BSP's template
-      // status API instead of defaulting to approved.
-      status: "approved",
+      imageUrl,
+      // Composed entirely in-app — no Meta approval step in this flow.
+      // See README for the compliance tradeoff of sending unapproved
+      // freeform content via the official WhatsApp Cloud API.
+      status: "draft",
     },
   });
 
@@ -79,20 +97,67 @@ export default function Templates() {
   const navigation = useNavigation();
 
   const [name, setName] = useState("");
-  const [templateId, setTemplateId] = useState("");
-  const [category, setCategory] = useState("UTILITY");
+  const [body, setBody] = useState("");
+  const [category, setCategory] = useState("MARKETING");
+  const [imageUrl, setImageUrl] = useState("");
+  const [imageUploading, setImageUploading] = useState(false);
+  const bodyRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const isSaving = navigation.state === "submitting";
 
-  const handleAdd = useCallback(() => {
+  // Insert a variable tag at the current cursor position in the textarea,
+  // rather than always appending to the end.
+  const insertVariable = useCallback(
+    (tag: string) => {
+      const el = bodyRef.current;
+      if (!el) {
+        setBody((prev) => `${prev} ${tag}`);
+        return;
+      }
+      const start = el.selectionStart ?? body.length;
+      const end = el.selectionEnd ?? body.length;
+      const next = body.slice(0, start) + tag + body.slice(end);
+      setBody(next);
+      requestAnimationFrame(() => {
+        el.focus();
+        el.selectionStart = el.selectionEnd = start + tag.length;
+      });
+    },
+    [body],
+  );
+
+  // Uploads the image to our own /api/upload-image route, which stores it
+  // and returns a public URL — this is a lightweight image host for template
+  // headers, not a Meta/Google integration.
+  const handleImageSelect = useCallback(async (file: File) => {
+    setImageUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/upload-image", { method: "POST", body: formData });
+      const data = await res.json();
+      if (res.ok && data.url) {
+        setImageUrl(data.url);
+      }
+    } catch (err) {
+      console.error("Image upload failed", err);
+    } finally {
+      setImageUploading(false);
+    }
+  }, []);
+
+  const handleSave = useCallback(() => {
     const formData = new FormData();
     formData.append("name", name);
-    formData.append("whatsappTemplateId", templateId);
+    formData.append("body", body);
     formData.append("category", category);
+    formData.append("imageUrl", imageUrl);
     submit(formData, { method: "post" });
     setName("");
-    setTemplateId("");
-  }, [name, templateId, category, submit]);
+    setBody("");
+    setImageUrl("");
+  }, [name, body, category, imageUrl, submit]);
 
   const handleDelete = useCallback(
     (id: string) => {
@@ -104,70 +169,189 @@ export default function Templates() {
     [submit],
   );
 
+  // Live preview: swap {tags} for readable sample values so the merchant can
+  // see roughly what the customer will receive.
+  const previewText = ORDER_VARIABLES.reduce(
+    (text, v) => text.split(v.tag).join(sampleValue(v.tag)),
+    body || "Your message preview will appear here...",
+  );
+
   const rows = templates.map((t) => [
     t.name,
-    t.whatsappTemplateId,
     <Badge key={`${t.id}-cat`} tone={t.category === "MARKETING" ? "attention" : "info"}>
       {t.category}
     </Badge>,
-    <Badge key={`${t.id}-status`} tone={t.status === "approved" ? "success" : "warning"}>
-      {t.status}
-    </Badge>,
+    t.imageUrl ? (
+      <Thumbnail key={`${t.id}-img`} source={t.imageUrl} alt={t.name} size="small" />
+    ) : (
+      "—"
+    ),
+    new Date(t.createdAt).toLocaleDateString(),
     <Button key={`${t.id}-del`} variant="plain" tone="critical" onClick={() => handleDelete(t.id)}>
       Remove
     </Button>,
   ]);
 
   return (
-    <Page title="WhatsApp Templates">
+    <Page title="Message Templates">
       <BlockStack gap="400">
         <Banner tone="info">
-          Templates must be created and approved in Meta Business Manager (or
-          your BSP's dashboard, e.g. Gupshup/Interakt) first. Register the
-          exact approved template name and ID here so it can be used for
-          order updates and broadcasts.
+          Templates you create here are composed entirely in this app — no
+          Meta or Google approval step in this flow. If you're sending via
+          the official WhatsApp Cloud API, keep in mind Meta still requires
+          marketing broadcasts to use an approved template; using unapproved
+          freeform content works only with an unofficial WhatsApp connection,
+          which risks your number getting banned. Ask if you want help
+          weighing that tradeoff.
         </Banner>
 
-        <Card>
-          <BlockStack gap="400">
-            <Text as="h2" variant="headingMd">
-              Register a template
-            </Text>
-            <InlineStack gap="400" blockAlign="end">
-              <TextField
-                label="Display name"
-                value={name}
-                onChange={setName}
-                autoComplete="off"
-                placeholder="Diwali Sale Offer"
-              />
-              <TextField
-                label="Approved template name/ID"
-                value={templateId}
-                onChange={setTemplateId}
-                autoComplete="off"
-                placeholder="diwali_sale_2026"
-              />
-              <Select
-                label="Category"
-                options={[
-                  { label: "Marketing (offers)", value: "MARKETING" },
-                  { label: "Utility (order/tracking)", value: "UTILITY" },
-                ]}
-                value={category}
-                onChange={setCategory}
-              />
-              <Button
-                variant="primary"
-                onClick={handleAdd}
-                loading={isSaving}
-                disabled={!name || !templateId}
-              >
-                Add template
-              </Button>
-            </InlineStack>
-          </BlockStack>
-        </Card>
+        <InlineStack gap="400" align="start" wrap={false}>
+          <Box width="55%">
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">
+                  Create a template
+                </Text>
+
+                <TextField
+                  label="Template name"
+                  value={name}
+                  onChange={setName}
+                  autoComplete="off"
+                  placeholder="Diwali Sale Offer"
+                />
+
+                <Select
+                  label="Category"
+                  options={[
+                    { label: "Marketing (offers/broadcasts)", value: "MARKETING" },
+                    { label: "Utility (order/tracking updates)", value: "UTILITY" },
+                  ]}
+                  value={category}
+                  onChange={setCategory}
+                />
+
+                <div>
+                  <Text as="p" variant="bodyMd" fontWeight="medium">
+                    Message
+                  </Text>
+                  <div style={{ marginTop: 4 }}>
+                    <textarea
+                      ref={bodyRef}
+                      value={body}
+                      onChange={(e) => setBody(e.target.value)}
+                      rows={6}
+                      placeholder="Hello {first_name}, your order {order_id} is confirmed!"
+                      style={{
+                        width: "100%",
+                        padding: "8px 12px",
+                        border: "1px solid #c9cccf",
+                        borderRadius: 8,
+                        fontFamily: "inherit",
+                        fontSize: 14,
+                        resize: "vertical",
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <BlockStack gap="200">
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Insert a dynamic tag — click to add at your cursor:
+                  </Text>
+                  <InlineStack gap="150" wrap>
+                    {ORDER_VARIABLES.map((v) => (
+                      <Button key={v.tag} size="micro" onClick={() => insertVariable(v.tag)}>
+                        {v.label}
+                      </Button>
+                    ))}
+                  </InlineStack>
+                </BlockStack>
+
+                <BlockStack gap="200">
+                  <Text as="p" variant="bodyMd" fontWeight="medium">
+                    Image (optional)
+                  </Text>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: "none" }}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleImageSelect(file);
+                    }}
+                  />
+                  <InlineStack gap="200" blockAlign="center">
+                    <Button onClick={() => fileInputRef.current?.click()} loading={imageUploading}>
+                      {imageUrl ? "Change image" : "Upload image"}
+                    </Button>
+                    {imageUrl && (
+                      <>
+                        <Thumbnail source={imageUrl} alt="Template image" size="small" />
+                        <Button variant="plain" tone="critical" onClick={() => setImageUrl("")}>
+                          Remove
+                        </Button>
+                      </>
+                    )}
+                  </InlineStack>
+                </BlockStack>
+
+                <Button
+                  variant="primary"
+                  onClick={handleSave}
+                  loading={isSaving}
+                  disabled={!name || !body}
+                >
+                  Save template
+                </Button>
+              </BlockStack>
+            </Card>
+          </Box>
+
+          <Box width="45%">
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">
+                  Preview
+                </Text>
+                <div
+                  style={{
+                    background: "#e5ddd5",
+                    borderRadius: 12,
+                    padding: 16,
+                  }}
+                >
+                  <div
+                    style={{
+                      background: "#fff",
+                      borderRadius: 8,
+                      padding: 12,
+                      maxWidth: 320,
+                      boxShadow: "0 1px 2px rgba(0,0,0,0.15)",
+                    }}
+                  >
+                    {imageUrl && (
+                      <img
+                        src={imageUrl}
+                        alt="preview"
+                        style={{
+                          width: "100%",
+                          borderRadius: 6,
+                          marginBottom: 8,
+                          display: "block",
+                        }}
+                      />
+                    )}
+                    <Text as="p" variant="bodyMd">
+                      {previewText}
+                    </Text>
+                  </div>
+                </div>
+              </BlockStack>
+            </Card>
+          </Box>
+        </InlineStack>
 
         <Card>
           <BlockStack gap="400">
@@ -177,12 +361,12 @@ export default function Templates() {
             {rows.length > 0 ? (
               <DataTable
                 columnContentTypes={["text", "text", "text", "text", "text"]}
-                headings={["Name", "Template ID", "Category", "Status", ""]}
+                headings={["Name", "Category", "Image", "Created", ""]}
                 rows={rows}
               />
             ) : (
-              <EmptyState heading="No templates registered yet" image="">
-                <p>Add your first approved template above.</p>
+              <EmptyState heading="No templates yet" image="">
+                <p>Create your first message template above.</p>
               </EmptyState>
             )}
           </BlockStack>
@@ -190,4 +374,20 @@ export default function Templates() {
       </BlockStack>
     </Page>
   );
+}
+
+function sampleValue(tag: string): string {
+  const samples: Record<string, string> = {
+    "{first_name}": "Rahul",
+    "{last_name}": "Sharma",
+    "{order_id}": "1023",
+    "{order_number}": "#1023",
+    "{order_date}": "11 Jul 2026",
+    "{order_url}": "https://yourstore.com/orders/1023",
+    "{order_total}": "₹1,299",
+    "{tracking_number}": "TRK123456789",
+    "{tracking_company}": "Delhivery",
+    "{tracking_url}": "https://track.delhivery.com/TRK123456789",
+  };
+  return samples[tag] ?? tag;
 }

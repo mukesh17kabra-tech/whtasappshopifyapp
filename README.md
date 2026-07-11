@@ -138,3 +138,18 @@ The build uses `prisma db push` instead of `prisma migrate deploy`. The differen
 - `db push` syncs your `schema.prisma` directly to the database, no migration files needed — simpler for a single-developer project without a local dev environment.
 
 The `--accept-data-loss` flag is safe right now since the database is empty. Once you have real subscriber/order data in production, be careful: if you change a column type or drop a field in `schema.prisma`, `db push --accept-data-loss` will apply that destructively without asking. At that point, consider switching to proper migrations (`prisma migrate dev` locally, commit the migration files, then use `prisma migrate deploy` in `vercel-build` instead) so schema changes are reviewable and reversible.
+
+## In-app template composer (no Meta/Google approval needed to build)
+
+The Templates page (`app/routes/app.templates.tsx`) is now a full composer, not just a form referencing an external Meta template ID:
+
+- Write the message body directly in the app
+- Insert dynamic tags like `{first_name}`, `{order_id}`, `{tracking_url}` at your cursor — see the full list in `ORDER_VARIABLES` in that file
+- Upload an optional header image (stored via Vercel Blob — free tier, add the "Blob" integration in your Vercel project's Storage tab to get `BLOB_READ_WRITE_TOKEN`)
+- Live WhatsApp-style preview with sample data substituted in
+
+**Important compliance note:** building the template is fully in-app now, but *sending* a marketing broadcast built this way uses `sendWhatsappCustomMessage` in `whatsapp.server.ts`, which sends freeform text/image messages — not Meta's pre-approved template mechanism. Meta's Cloud API restricts freeform sends to within a 24-hour customer service window (i.e., messages the customer can reply to shortly after they last messaged you) unless your WhatsApp Business Account has been granted expanded messaging limits. Sending bulk unapproved marketing content outside that window via the official API risks the message being rejected or your number being restricted.
+
+Two paths forward if you want true no-approval bulk sending:
+1. Get your WhatsApp Business Account's messaging limits expanded by building a track record of quality conversations (Meta reviews this automatically over time)
+2. Use an unofficial WhatsApp automation library (e.g. Baileys) that logs into a regular WhatsApp Web session instead of the Business API — no approval needed, but against WhatsApp's Terms of Service and carries a real ban risk, especially at volume. This would require a different, always-on hosting model (not a good fit for Vercel's serverless functions, which can't hold a persistent browser/WebSocket session) — ask if you want to explore this route, it's a meaningfully different architecture.

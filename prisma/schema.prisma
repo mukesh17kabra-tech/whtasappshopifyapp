@@ -76,9 +76,11 @@ model Template {
   shop               Shop     @relation(fields: [shopId], references: [id])
   shopId             String
   name               String
-  whatsappTemplateId String   // Meta/BSP-approved template ID
+  whatsappTemplateId String?  // only needed if using Meta's approved-template send path
   category           String   // "MARKETING" | "UTILITY"
-  status             String   @default("pending") // pending | approved | rejected
+  status             String   @default("draft") // draft | pending | approved | rejected
+  body               String   @default("") // message text with {variable} placeholders, composed in-app
+  imageUrl           String?  // optional header image for the message
   createdAt          DateTime @default(now())
 
   @@index([shopId])

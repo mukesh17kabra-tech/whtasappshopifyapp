@@ -33,7 +33,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       take: 20,
     }),
     prisma.template.findMany({
-      where: { shopId: shop.id, category: "MARKETING", status: "approved" },
+      where: { shopId: shop.id, category: "MARKETING" },
     }),
     prisma.optin.count({ where: { shopId: shop.id, optedOutAt: null } }),
   ]);
@@ -143,16 +143,14 @@ export default function Broadcasts() {
                 Send a new offer broadcast
               </Text>
               <Text as="p" tone="subdued">
-                This will send to all {subscriberCount} active subscribers.
-                Only approved marketing templates can be used — WhatsApp
-                rejects unapproved outbound marketing content.
+                This will send to all {subscriberCount} active subscribers,
+                using a template you composed on the Templates page.
               </Text>
 
               {templates.length === 0 ? (
                 <Banner tone="warning">
-                  No approved marketing templates yet. Add one on the
-                  Templates page and wait for Meta/your BSP to approve it
-                  before you can broadcast.
+                  No marketing templates yet. Create one on the Templates
+                  page first.
                 </Banner>
               ) : (
                 <>
