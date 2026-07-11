@@ -76,9 +76,6 @@ export async function action({ request }: ActionFunctionArgs) {
     let result;
 
     if (job.type === "broadcast_message") {
-      // In-app composed template: render {variables} into the body and send
-      // as freeform text/image rather than through Meta's approved-template
-      // mechanism. See compliance note on the Templates admin page.
       const template = await prisma.template.findUnique({
         where: { id: job.templateId },
       });
@@ -87,12 +84,41 @@ export async function action({ request }: ActionFunctionArgs) {
         throw new Error(`Template ${job.templateId} not found`);
       }
 
-      const renderedText = renderTemplateBody(template.body, {});
-      result = await sendWhatsappCustomMessage({
-        to: job.phoneNumber,
-        text: renderedText,
-        imageUrl: template.imageUrl,
-      });
+      if (template.status === "approved" && template.whatsappTemplateId) {
+        const variableKeys: string[] = JSON.parse(template.variableKeys || "[]");
+
+        if (variableKeys.length > 0) {
+          // Broadcasts have no per-customer order/tracking context to fill
+          // real values for {order_id}, {tracking_url}, etc. — those only
+          // make sense for the order-confirmation/shipment-update flows.
+          // A marketing template with variables can't be safely broadcast
+          // this way; log and skip rather than send garbage placeholder text.
+          console.error(
+            `Template ${template.id} has variables (${variableKeys.join(", ")}) but broadcasts have no per-customer data to fill them — skipping send. Use a template with no variables for broadcasts.`,
+          );
+          return new Response(
+            "Template has variables not usable in a broadcast context",
+            { status: 200 },
+          );
+        }
+
+        result = await sendWhatsappTemplateMessage({
+          to: job.phoneNumber,
+          templateName: template.name,
+          variables: {},
+        });
+      } else {
+        // Not yet approved (draft/pending/rejected) — send as freeform via
+        // whichever provider is active. On the Meta path this only reaches
+        // customers within their 24h service window; on the bridge path it
+        // always works.
+        const renderedText = renderTemplateBody(template.body, {});
+        result = await sendWhatsappCustomMessage({
+          to: job.phoneNumber,
+          text: renderedText,
+          imageUrl: template.imageUrl,
+        });
+      }
       templateName = template.name;
     } else {
       result = await sendWhatsappTemplateMessage({

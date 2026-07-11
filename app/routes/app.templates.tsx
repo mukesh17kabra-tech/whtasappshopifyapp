@@ -19,6 +19,7 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
+import { submitMetaTemplate, checkMetaTemplateStatus, convertToMetaPlaceholders } from "~/services/meta-templates.server";
 
 // Variables a merchant can insert into a template body. These get substituted
 // with real order/customer data at send time (see services/template.server.ts).
@@ -65,6 +66,62 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ success: true });
   }
 
+  if (intent === "submit") {
+    const id = String(formData.get("id"));
+    const template = await prisma.template.findUnique({ where: { id } });
+    if (!template || template.shopId !== shop.id) {
+      return json({ error: "Template not found" }, { status: 404 });
+    }
+
+    const result = await submitMetaTemplate({
+      displayName: template.name,
+      category: template.category as "MARKETING" | "UTILITY",
+      body: template.body,
+    });
+
+    if (!result.success) {
+      await prisma.template.update({
+        where: { id },
+        data: { status: "rejected", rejectionReason: result.error },
+      });
+      return json({ error: result.error }, { status: 400 });
+    }
+
+    await prisma.template.update({
+      where: { id },
+      data: {
+        whatsappTemplateId: result.metaTemplateId,
+        status: result.status,
+        rejectionReason: null,
+      },
+    });
+
+    return json({ success: true });
+  }
+
+  if (intent === "refresh-status") {
+    const id = String(formData.get("id"));
+    const template = await prisma.template.findUnique({ where: { id } });
+    if (!template?.whatsappTemplateId || template.shopId !== shop.id) {
+      return json({ error: "Not submitted yet" }, { status: 400 });
+    }
+
+    const result = await checkMetaTemplateStatus(template.whatsappTemplateId);
+    if (!result.success) {
+      return json({ error: result.error }, { status: 400 });
+    }
+
+    await prisma.template.update({
+      where: { id },
+      data: {
+        status: result.status,
+        rejectionReason: result.rejectionReason ?? null,
+      },
+    });
+
+    return json({ success: true });
+  }
+
   const name = String(formData.get("name") ?? "").trim();
   const body = String(formData.get("body") ?? "").trim();
   const category = String(formData.get("category") ?? "UTILITY");
@@ -74,6 +131,8 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ error: "Name and message body are required" }, { status: 400 });
   }
 
+  const { variableKeys } = convertToMetaPlaceholders(body);
+
   await prisma.template.create({
     data: {
       shopId: shop.id,
@@ -81,9 +140,9 @@ export async function action({ request }: ActionFunctionArgs) {
       body,
       category,
       imageUrl,
-      // Composed entirely in-app — no Meta approval step in this flow.
-      // See README for the compliance tradeoff of sending unapproved
-      // freeform content via the official WhatsApp Cloud API.
+      variableKeys: JSON.stringify(variableKeys),
+      // Composed in-app; submit for Meta approval separately via the
+      // "Submit for approval" button once you're happy with the wording.
       status: "draft",
     },
   });
@@ -169,6 +228,26 @@ export default function Templates() {
     [submit],
   );
 
+  const handleSubmitForApproval = useCallback(
+    (id: string) => {
+      const formData = new FormData();
+      formData.append("intent", "submit");
+      formData.append("id", id);
+      submit(formData, { method: "post" });
+    },
+    [submit],
+  );
+
+  const handleRefreshStatus = useCallback(
+    (id: string) => {
+      const formData = new FormData();
+      formData.append("intent", "refresh-status");
+      formData.append("id", id);
+      submit(formData, { method: "post" });
+    },
+    [submit],
+  );
+
   // Live preview: swap {tags} for readable sample values so the merchant can
   // see roughly what the customer will receive.
   const previewText = ORDER_VARIABLES.reduce(
@@ -177,32 +256,70 @@ export default function Templates() {
   );
 
   const rows = templates.map((t) => [
-    t.name,
+    <BlockStack key={`${t.id}-name`} gap="050">
+      <Text as="span" fontWeight="medium">{t.name}</Text>
+      {t.status === "rejected" && t.rejectionReason && (
+        <Text as="span" variant="bodySm" tone="critical">
+          {t.rejectionReason}
+        </Text>
+      )}
+    </BlockStack>,
     <Badge key={`${t.id}-cat`} tone={t.category === "MARKETING" ? "attention" : "info"}>
       {t.category}
+    </Badge>,
+    <Badge
+      key={`${t.id}-status`}
+      tone={
+        t.status === "approved"
+          ? "success"
+          : t.status === "rejected"
+          ? "critical"
+          : t.status === "pending"
+          ? "warning"
+          : undefined
+      }
+    >
+      {t.status}
     </Badge>,
     t.imageUrl ? (
       <Thumbnail key={`${t.id}-img`} source={t.imageUrl} alt={t.name} size="small" />
     ) : (
       "—"
     ),
-    new Date(t.createdAt).toLocaleDateString(),
-    <Button key={`${t.id}-del`} variant="plain" tone="critical" onClick={() => handleDelete(t.id)}>
-      Remove
-    </Button>,
+    <InlineStack key={`${t.id}-actions`} gap="200">
+      {t.status === "draft" && (
+        <Button size="slim" onClick={() => handleSubmitForApproval(t.id)}>
+          Submit for approval
+        </Button>
+      )}
+      {t.status === "pending" && (
+        <Button size="slim" onClick={() => handleRefreshStatus(t.id)}>
+          Refresh status
+        </Button>
+      )}
+      {t.status === "rejected" && (
+        <Button size="slim" onClick={() => handleSubmitForApproval(t.id)}>
+          Resubmit
+        </Button>
+      )}
+      <Button size="slim" variant="plain" tone="critical" onClick={() => handleDelete(t.id)}>
+        Remove
+      </Button>
+    </InlineStack>,
   ]);
 
   return (
     <Page title="Message Templates">
       <BlockStack gap="400">
         <Banner tone="info">
-          Templates you create here are composed entirely in this app — no
-          Meta or Google approval step in this flow. If you're sending via
-          the official WhatsApp Cloud API, keep in mind Meta still requires
-          marketing broadcasts to use an approved template; using unapproved
-          freeform content works only with an unofficial WhatsApp connection,
-          which risks your number getting banned. Ask if you want help
-          weighing that tradeoff.
+          Compose your message here, then click <strong>Submit for approval</strong> —
+          this submits it directly to Meta's API for you, no need to visit
+          Business Manager. Approval is usually automatic within minutes to a
+          few hours. Note: templates with an uploaded image header currently
+          still need manual submission in Meta Business Manager (Meta's image
+          upload process for templates needs a separate step not yet wired
+          up here) — text-only templates submit and get approved fully
+          automatically from this page.
         </Banner>
 
         <InlineStack gap="400" align="start" wrap={false}>
@@ -257,7 +374,12 @@ export default function Templates() {
 
                 <BlockStack gap="200">
                   <Text as="p" variant="bodySm" tone="subdued">
-                    Insert a dynamic tag — click to add at your cursor:
+                    Insert a dynamic tag — click to add at your cursor. Note:
+                    for broadcast/marketing templates, skip these — broadcasts
+                    have no per-customer order to fill them with, so a
+                    variable-free message (e.g. just the offer text) is what
+                    actually sends. Tags are meant for order confirmation/
+                    shipping templates instead, which do have that context.
                   </Text>
                   <InlineStack gap="150" wrap>
                     {ORDER_VARIABLES.map((v) => (
@@ -361,7 +483,7 @@ export default function Templates() {
             {rows.length > 0 ? (
               <DataTable
                 columnContentTypes={["text", "text", "text", "text", "text"]}
-                headings={["Name", "Category", "Image", "Created", ""]}
+                headings={["Name", "Category", "Approval Status", "Image", "Actions"]}
                 rows={rows}
               />
             ) : (

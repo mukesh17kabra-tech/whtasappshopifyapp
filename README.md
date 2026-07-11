@@ -153,3 +153,22 @@ The Templates page (`app/routes/app.templates.tsx`) is now a full composer, not 
 Two paths forward if you want true no-approval bulk sending:
 1. Get your WhatsApp Business Account's messaging limits expanded by building a track record of quality conversations (Meta reviews this automatically over time)
 2. Use an unofficial WhatsApp automation library (e.g. Baileys) that logs into a regular WhatsApp Web session instead of the Business API — no approval needed, but against WhatsApp's Terms of Service and carries a real ban risk, especially at volume. This would require a different, always-on hosting model (not a good fit for Vercel's serverless functions, which can't hold a persistent browser/WebSocket session) — ask if you want to explore this route, it's a meaningfully different architecture.
+
+## Sending without Meta approval (WhatsApp Bridge)
+
+As requested, the default send path no longer requires any Meta/Google approval. A separate small service (`whatsapp-bridge-service`, provided alongside this app but deployed independently) connects to WhatsApp the same way WhatsApp Web does — link a real phone number by scanning a QR code once, then send messages directly through that connection.
+
+**Setup:**
+1. Deploy `whatsapp-bridge-service` to Railway (free tier) — full instructions in that folder's own README
+2. Scan the QR code once to link your WhatsApp number
+3. Set these env vars in this app (the Shopify app, on Vercel):
+   ```
+   WHATSAPP_PROVIDER=bridge
+   WHATSAPP_BRIDGE_URL=https://your-bridge-service.up.railway.app
+   WHATSAPP_BRIDGE_SECRET=<same secret you set on the bridge service>
+   ```
+4. `app/routes/webhooks.whatsapp.bridge-inbound.tsx` receives forwarded replies (STOP/START) from the bridge — set `INBOUND_WEBHOOK_URL` on the bridge service to point here (see bridge README).
+
+**What this trades away:** no template approval step, fully freeform messages including images, sent instantly. **What it costs:** this isn't an officially sanctioned way to use WhatsApp — numbers that send too much too fast, or get reported as spam, can get banned. Start with a dedicated number, go slow on volume initially, and keep an eye on delivery failures. Full risk discussion is in `whatsapp-bridge-service/README.md`.
+
+If you ever want to switch back to the compliant Meta path (e.g. after your account earns higher messaging limits), set `WHATSAPP_PROVIDER=meta` and fill in the `WHATSAPP_PHONE_NUMBER_ID`/`WHATSAPP_ACCESS_TOKEN` vars — the code path for that is still intact in `whatsapp.server.ts`.

@@ -76,11 +76,13 @@ model Template {
   shop               Shop     @relation(fields: [shopId], references: [id])
   shopId             String
   name               String
-  whatsappTemplateId String?  // only needed if using Meta's approved-template send path
+  whatsappTemplateId String?  // Meta's template ID, filled in after successful submission
   category           String   // "MARKETING" | "UTILITY"
   status             String   @default("draft") // draft | pending | approved | rejected
   body               String   @default("") // message text with {variable} placeholders, composed in-app
   imageUrl           String?  // optional header image for the message
+  variableKeys       String   @default("[]") // JSON array of {tag} names in order, e.g. ["first_name","order_id"]
+  rejectionReason    String?  // Meta's feedback if status is "rejected"
   createdAt          DateTime @default(now())
 
   @@index([shopId])
