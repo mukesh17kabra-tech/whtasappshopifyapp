@@ -1,6 +1,7 @@
 {
   "name": "shopify-whatsapp-app",
   "private": true,
+  "type": "module",
   "scripts": {
     "build": "remix vite:build",
     "dev": "shopify app dev",

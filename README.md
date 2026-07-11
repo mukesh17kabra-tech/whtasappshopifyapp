@@ -130,3 +130,11 @@ For Remix apps, function duration is controlled differently:
 - **Vercel Pro plan**: you can raise the cap up to 60s (or 300s with extra config) via the **Vercel Dashboard → Project Settings → Functions → Default Max Duration**, not via `vercel.json`, when using the Remix framework preset.
 
 Since this whole stack is designed to stay on free tiers, and the fast-ack + QStash queue pattern means no single function call should ever need more than a couple seconds, the Hobby plan's 10s cap should never actually bind here. If you later see timeout errors specifically on `api.jobs.send-whatsapp`, that's a sign the WhatsApp API call itself is slow — check Meta's status page before assuming you need to upgrade Vercel.
+
+## Database sync: db push vs migrate deploy
+
+The build uses `prisma db push` instead of `prisma migrate deploy`. The difference:
+- `migrate deploy` applies pre-generated migration files from a `prisma/migrations` folder (created by running `prisma migrate dev` on your own machine first). We never generated one, so this failed with "No migration found."
+- `db push` syncs your `schema.prisma` directly to the database, no migration files needed — simpler for a single-developer project without a local dev environment.
+
+The `--accept-data-loss` flag is safe right now since the database is empty. Once you have real subscriber/order data in production, be careful: if you change a column type or drop a field in `schema.prisma`, `db push --accept-data-loss` will apply that destructively without asking. At that point, consider switching to proper migrations (`prisma migrate dev` locally, commit the migration files, then use `prisma migrate deploy` in `vercel-build` instead) so schema changes are reviewable and reversible.
