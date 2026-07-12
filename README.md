@@ -265,3 +265,21 @@ Not built in this pass — flagged as genuinely large, separate features rather 
 - A direct support chat channel from the merchant to you (the app developer)
 
 Both are legitimate, valuable next features — worth their own dedicated build rather than bolting on incompletely here.
+
+## Searchable product/collection/discount pickers, Support Chat, storefront Chatbot
+
+**Searchable dropdowns**: the Templates page's product/collection/discount fields are now type-to-search (Polaris Autocomplete) instead of plain dropdowns — useful once a store has more than a handful of items.
+
+**Support Chat** (`app.support.tsx` for merchants, `developer.support.tsx` for you):
+- Merchants get a "Support" page in their nav — a real chat thread stored in the `SupportMessage` table, polling every 5s for your replies.
+- You view/reply to every shop's thread at `https://your-app.vercel.app/developer/support?key=YOUR_SECRET` — set `DEVELOPER_SUPPORT_SECRET` to any random string. This is a plain, unstyled page since only you use it — a shop list on the left (unread counts shown), thread + reply box on the right.
+- This is genuinely simple by design — no ticket system, priorities, or categorization. Good enough for direct merchant contact; would need more structure if you get many concurrent merchants.
+
+**Storefront Chatbot** (`extensions/whatsapp-popup/blocks/chatbot.liquid`):
+- A floating WhatsApp-green chat bubble, bottom-right, with a one-time tooltip ("Let's chat to find your product!") a few seconds after page load.
+- Rule-based flow (not real AI — a decision tree, which is honest about what it does and keeps it instant): pick a category (your real collections) → pick a budget bracket → get up to 3 matching product cards with image/price/link → then either "Start over" or "Chat with us on WhatsApp" (opens a wa.me link pre-filled with their interest, using your connected WhatsApp number).
+- Data comes from `/apps/whatsapp-offers/chatbot-data`, a new endpoint on the same App Proxy dispatcher, pulling real collections/products/prices via Shopify's Admin API.
+- Enable it the same way as the popup: Theme Editor → App Embeds → toggle "Product Finder Chatbot" on.
+- The WhatsApp handoff link only appears if you've connected a WhatsApp number (Connect WhatsApp page) — the bridge service now reports back the connected number so this can build a working wa.me link.
+
+**Known limitation to flag honestly**: the chatbot is a scripted flow, not an LLM — it can't answer open-ended questions, only walk the fixed category → budget → suggestion path. If you want true conversational AI product recommendations later, that's a meaningfully bigger build (calling an LLM API per message) — ask if you want that upgrade.

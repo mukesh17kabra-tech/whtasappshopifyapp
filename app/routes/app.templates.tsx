@@ -17,6 +17,7 @@ import {
   Thumbnail,
   Box,
   Tabs,
+  Autocomplete,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
@@ -201,7 +202,9 @@ function MarketingTab({ templates, isSaving, onDelete, submit }: any) {
 
   const [linkType, setLinkType] = useState<"product" | "collection">("product");
   const [selectedLink, setSelectedLink] = useState("");
+  const [linkSearch, setLinkSearch] = useState("");
   const [selectedDiscount, setSelectedDiscount] = useState("");
+  const [discountSearch, setDiscountSearch] = useState("");
 
   useEffect(() => {
     resourcesFetcher.load("/api/store-resources");
@@ -212,6 +215,17 @@ function MarketingTab({ templates, isSaving, onDelete, submit }: any) {
   const collections = resourcesFetcher.data?.collections ?? [];
   const discounts = resourcesFetcher.data?.discounts ?? [];
   const linkOptions = linkType === "product" ? products : collections;
+
+  const filteredLinkOptions = linkSearch
+    ? linkOptions.filter((item: any) => item.title.toLowerCase().includes(linkSearch.toLowerCase()))
+    : linkOptions;
+
+  const filteredDiscounts = discountSearch
+    ? discounts.filter((d: any) =>
+        d.title.toLowerCase().includes(discountSearch.toLowerCase()) ||
+        d.code.toLowerCase().includes(discountSearch.toLowerCase()),
+      )
+    : discounts;
 
   const insertAtCursor = useCallback(
     (text: string) => {
@@ -349,18 +363,24 @@ function MarketingTab({ templates, isSaving, onDelete, submit }: any) {
                       onChange={(v) => {
                         setLinkType(v as "product" | "collection");
                         setSelectedLink("");
+                        setLinkSearch("");
                       }}
                     />
                   </Box>
                   <Box minWidth="240px">
-                    <Select
-                      label={linkType === "product" ? "Product" : "Collection"}
-                      options={[
-                        { label: resourcesFetcher.state === "loading" ? "Loading..." : "Select one", value: "" },
-                        ...linkOptions.map((item: any) => ({ label: item.title, value: item.url })),
-                      ]}
-                      value={selectedLink}
-                      onChange={setSelectedLink}
+                    <Autocomplete
+                      options={filteredLinkOptions.map((item: any) => ({ label: item.title, value: item.url }))}
+                      selected={selectedLink ? [selectedLink] : []}
+                      onSelect={(selected) => setSelectedLink(selected[0] || "")}
+                      textField={
+                        <Autocomplete.TextField
+                          label={linkType === "product" ? "Search products" : "Search collections"}
+                          value={linkSearch}
+                          onChange={setLinkSearch}
+                          placeholder={resourcesFetcher.state === "loading" ? "Loading..." : "Type to search..."}
+                          autoComplete="off"
+                        />
+                      }
                     />
                   </Box>
                   <Button onClick={() => insertAtCursor(selectedLink)} disabled={!selectedLink}>
@@ -369,14 +389,19 @@ function MarketingTab({ templates, isSaving, onDelete, submit }: any) {
                 </InlineStack>
                 <InlineStack gap="200" blockAlign="end" wrap>
                   <Box minWidth="240px">
-                    <Select
-                      label="Discount code"
-                      options={[
-                        { label: discounts.length === 0 ? "No active codes found" : "Select one", value: "" },
-                        ...discounts.map((d: any) => ({ label: `${d.title} (${d.code})`, value: d.code })),
-                      ]}
-                      value={selectedDiscount}
-                      onChange={setSelectedDiscount}
+                    <Autocomplete
+                      options={filteredDiscounts.map((d: any) => ({ label: `${d.title} (${d.code})`, value: d.code }))}
+                      selected={selectedDiscount ? [selectedDiscount] : []}
+                      onSelect={(selected) => setSelectedDiscount(selected[0] || "")}
+                      textField={
+                        <Autocomplete.TextField
+                          label="Search discount codes"
+                          value={discountSearch}
+                          onChange={setDiscountSearch}
+                          placeholder={discounts.length === 0 ? "No active codes found" : "Type to search..."}
+                          autoComplete="off"
+                        />
+                      }
                     />
                   </Box>
                   <Button onClick={() => insertAtCursor(selectedDiscount)} disabled={!selectedDiscount}>

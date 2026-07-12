@@ -84,7 +84,11 @@ export async function action({ request }: ActionFunctionArgs) {
       if (statusData.status === "connected" && !shop.whatsappBridgeConnected) {
         await prisma.shop.update({
           where: { id: shop.id },
-          data: { whatsappBridgeConnected: true, whatsappConnectedAt: new Date() },
+          data: {
+            whatsappBridgeConnected: true,
+            whatsappConnectedAt: new Date(),
+            whatsappDisplayNumber: statusData.phoneNumber ?? null,
+          },
         });
       }
 

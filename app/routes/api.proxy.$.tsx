@@ -15,6 +15,60 @@ import prisma from "~/db.server";
 export async function loader({ request, params }: LoaderFunctionArgs) {
   const path = params["*"] ?? "";
 
+  if (path === "chatbot-data") {
+    const { session, admin } = await authenticate.public.appProxy(request);
+    if (!session || !admin) {
+      return Response.json({ collections: [], whatsappNumber: null });
+    }
+
+    const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
+
+    try {
+      const response = await admin.graphql(`
+        query ChatbotData {
+          collections(first: 15, sortKey: TITLE) {
+            nodes {
+              title
+              handle
+              products(first: 20) {
+                nodes {
+                  title
+                  handle
+                  onlineStoreUrl
+                  featuredImage { url }
+                  priceRangeV2 { minVariantPrice { amount currencyCode } }
+                }
+              }
+            }
+          }
+        }
+      `);
+      const data = await response.json();
+      const collections = (data?.data?.collections?.nodes ?? [])
+        .map((c: any) => ({
+          title: c.title,
+          products: (c.products?.nodes ?? [])
+            .filter((p: any) => p.priceRangeV2?.minVariantPrice?.amount)
+            .map((p: any) => ({
+              title: p.title,
+              url: p.onlineStoreUrl || `https://${session.shop}/products/${p.handle}`,
+              image: p.featuredImage?.url ?? null,
+              price: parseFloat(p.priceRangeV2.minVariantPrice.amount),
+              currency: p.priceRangeV2.minVariantPrice.currencyCode,
+            })),
+        }))
+        .filter((c: any) => c.products.length > 0);
+
+      return Response.json({
+        collections,
+        whatsappNumber: shop?.whatsappDisplayNumber ?? null,
+      });
+    } catch (err) {
+      console.error("Chatbot data fetch failed", err);
+      return Response.json({ collections: [], whatsappNumber: shop?.whatsappDisplayNumber ?? null });
+    }
+  }
+
   if (path !== "popup-config") {
     return Response.json({ error: "Not found" }, { status: 404 });
   }

@@ -28,6 +28,7 @@ export default function App() {
         <Link to="/app/templates">Templates</Link>
         <Link to="/app/popup-settings">Popup Settings</Link>
         <Link to="/app/billing">Billing</Link>
+        <Link to="/app/support">Support</Link>
       </NavMenu>
       <Outlet />
     </AppProvider>
