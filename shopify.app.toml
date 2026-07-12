@@ -1,8 +1,8 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 name = "whatsapp-offers"
-client_id = "" # filled in automatically after `shopify app config link`, or paste your Client ID here
-application_url = "https://your-app.vercel.app"
+client_id = "866284d78be7772c0243a45ebfb99c69" # filled in automatically after `shopify app config link`, or paste your Client ID here
+application_url = "https://whtasappshopifyapp.vercel.app"
 embedded = true
 
 [access_scopes]
@@ -10,16 +10,16 @@ scopes = "read_orders,read_customers,write_products,read_fulfillments"
 
 [auth]
 redirect_urls = [
-  "https://your-app.vercel.app/auth/callback",
-  "https://your-app.vercel.app/auth/shopify/callback",
-  "https://your-app.vercel.app/api/auth/callback"
+  "https://whtasappshopifyapp.vercel.app/auth/callback",
+  "https://whtasappshopifyapp.vercel.app/auth/shopify/callback",
+  "https://whtasappshopifyapp.vercel.app/api/auth/callback"
 ]
 
 [webhooks]
 api_version = "2025-01"
 
 [app_proxy]
-url = "https://your-app.vercel.app/api/proxy"
+url = "https://whtasappshopifyapp.vercel.app/api/proxy"
 subpath = "whatsapp-offers"
 prefix = "apps"
 
