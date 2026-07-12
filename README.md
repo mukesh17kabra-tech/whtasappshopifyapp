@@ -283,3 +283,16 @@ Both are legitimate, valuable next features — worth their own dedicated build 
 - The WhatsApp handoff link only appears if you've connected a WhatsApp number (Connect WhatsApp page) — the bridge service now reports back the connected number so this can build a working wa.me link.
 
 **Known limitation to flag honestly**: the chatbot is a scripted flow, not an LLM — it can't answer open-ended questions, only walk the fixed category → budget → suggestion path. If you want true conversational AI product recommendations later, that's a meaningfully bigger build (calling an LLM API per message) — ask if you want that upgrade.
+
+## Chatbot Settings page
+
+New "Chatbot Settings" page for the storefront Product Finder Chatbot:
+- Enable/disable toggle (separate from the theme editor's App Embed toggle — both need to be on for the widget to actually show)
+- Custom title (shown in the chat header)
+- Custom tooltip message (the one-time popup near the bubble)
+- Logo upload (replaces the default 💬 emoji icon)
+- Position: bottom-right or bottom-left
+
+These are fetched live by `chatbot.liquid` from the same `/apps/whatsapp-offers/chatbot-data` endpoint used for product data — one request gets both the catalog and the appearance settings.
+
+**Architecture clarification, worth restating:** this chatbot is a website widget only. It does not send or receive real WhatsApp messages during the conversation — only the final "Chat with us on WhatsApp" button opens a real WhatsApp link. A genuinely different feature — an automated bot that replies to real incoming WhatsApp messages on your connected number — would need its own dedicated build (conversation state per phone number, reusing the bridge's inbound webhook). Flagged as a clear next step if wanted, not built in this pass.

@@ -22,6 +22,13 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     }
 
     const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
+    const chatbotSettings = shop
+      ? await prisma.chatbotSettings.findUnique({ where: { shopId: shop.id } })
+      : null;
+
+    if (chatbotSettings && !chatbotSettings.enabled) {
+      return Response.json({ enabled: false, collections: [], whatsappNumber: null });
+    }
 
     try {
       const response = await admin.graphql(`
@@ -60,12 +67,25 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         .filter((c: any) => c.products.length > 0);
 
       return Response.json({
+        enabled: true,
         collections,
         whatsappNumber: shop?.whatsappDisplayNumber ?? null,
+        title: chatbotSettings?.title ?? "Find your product",
+        tooltipText: chatbotSettings?.tooltipText ?? "Let's chat to find your product!",
+        logoUrl: chatbotSettings?.logoUrl ?? null,
+        position: chatbotSettings?.position ?? "bottom-right",
       });
     } catch (err) {
       console.error("Chatbot data fetch failed", err);
-      return Response.json({ collections: [], whatsappNumber: shop?.whatsappDisplayNumber ?? null });
+      return Response.json({
+        enabled: true,
+        collections: [],
+        whatsappNumber: shop?.whatsappDisplayNumber ?? null,
+        title: chatbotSettings?.title ?? "Find your product",
+        tooltipText: chatbotSettings?.tooltipText ?? "Let's chat to find your product!",
+        logoUrl: chatbotSettings?.logoUrl ?? null,
+        position: chatbotSettings?.position ?? "bottom-right",
+      });
     }
   }
 

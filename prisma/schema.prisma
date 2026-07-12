@@ -57,6 +57,7 @@ model Shop {
   messageLogs   MessageLog[]
   popupSettings PopupSettings?
   supportMessages SupportMessage[]
+  chatbotSettings ChatbotSettings?
 }
 
 model Optin {
@@ -167,4 +168,16 @@ model SupportMessage {
   readByDeveloper Boolean  @default(false)
 
   @@index([shopId])
+}
+
+model ChatbotSettings {
+  id          String   @id @default(cuid())
+  shop        Shop     @relation(fields: [shopId], references: [id])
+  shopId      String   @unique
+  enabled     Boolean  @default(true)
+  title       String   @default("Find your product")
+  tooltipText String   @default("Let's chat to find your product!")
+  logoUrl     String?
+  position    String   @default("bottom-right") // "bottom-right" | "bottom-left"
+  updatedAt   DateTime @updatedAt
 }

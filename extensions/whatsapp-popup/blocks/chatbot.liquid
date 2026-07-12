@@ -7,7 +7,7 @@
   actually does and keeps it fast/predictable.
 {% endcomment %}
 
-<div id="wa-chatbot-bubble" class="wa-chatbot-bubble">
+<div id="wa-chatbot-bubble" class="wa-chatbot-bubble" style="display:none;">
   <div id="wa-chatbot-tooltip" class="wa-chatbot-tooltip">Let's chat to find your product!</div>
   <button id="wa-chatbot-icon" class="wa-chatbot-icon" aria-label="Open chat">💬</button>
 </div>
@@ -31,17 +31,46 @@
   var messagesEl = document.getElementById('wa-chatbot-messages');
   var optionsEl = document.getElementById('wa-chatbot-options');
 
-  var chatData = null; // fetched collections + whatsappNumber
+  var chatData = null; // fetched collections + whatsappNumber + settings
   var state = { step: 'start', collection: null };
 
-  // Show the little tooltip bubble once, a few seconds after page load
-  setTimeout(function () {
-    if (!sessionStorage.getItem('wa_chatbot_tooltip_shown')) {
-      tooltip.style.display = 'block';
-      sessionStorage.setItem('wa_chatbot_tooltip_shown', '1');
-      setTimeout(function () { tooltip.style.display = 'none'; }, 6000);
-    }
-  }, 4000);
+  // Fetch config first — decides whether to show anything at all, and
+  // applies the merchant's custom title/tooltip/logo/position.
+  fetch('/apps/whatsapp-offers/chatbot-data')
+    .then(function (res) { return res.json(); })
+    .then(function (data) {
+      chatData = data;
+
+      if (data.enabled === false) return; // merchant turned it off entirely
+
+      if (data.position === 'bottom-left') {
+        bubble.classList.add('wa-chatbot-bubble--left');
+        panel.classList.add('wa-chatbot-panel--left');
+      }
+      if (data.title) {
+        panel.querySelector('.wa-chatbot-header span').textContent = data.title;
+      }
+      if (data.tooltipText) {
+        tooltip.textContent = data.tooltipText;
+      }
+      if (data.logoUrl) {
+        icon.innerHTML = '<img src="' + data.logoUrl + '" alt="" style="width:32px;height:32px;border-radius:50%;object-fit:cover;" />';
+      }
+
+      bubble.style.display = 'flex';
+
+      setTimeout(function () {
+        if (!sessionStorage.getItem('wa_chatbot_tooltip_shown')) {
+          tooltip.style.display = 'block';
+          sessionStorage.setItem('wa_chatbot_tooltip_shown', '1');
+          setTimeout(function () { tooltip.style.display = 'none'; }, 6000);
+        }
+      }, 4000);
+    })
+    .catch(function () {
+      // If config fetch fails, don't show anything rather than showing
+      // potentially wrong/stale defaults.
+    });
 
   function addMessage(text, fromBot) {
     var bubble = document.createElement('div');
@@ -174,6 +203,8 @@
           messagesEl.innerHTML = '';
           addMessage("Sorry, something went wrong loading the catalog.", true);
         });
+    } else if (messagesEl.children.length === 0) {
+      startFlow();
     }
   });
 
@@ -188,6 +219,7 @@
     position: fixed; bottom: 24px; right: 24px; z-index: 9998;
     display: flex; align-items: center; gap: 8px;
   }
+  .wa-chatbot-bubble--left { right: auto; left: 24px; flex-direction: row-reverse; }
   .wa-chatbot-tooltip {
     display: none; background: #fff; padding: 10px 14px; border-radius: 10px;
     box-shadow: 0 2px 10px rgba(0,0,0,0.15); font-size: 14px; white-space: nowrap;
@@ -202,6 +234,7 @@
     background: #e5ddd5; border-radius: 12px; box-shadow: 0 4px 24px rgba(0,0,0,0.25);
     display: flex; flex-direction: column; overflow: hidden;
   }
+  .wa-chatbot-panel--left { right: auto; left: 24px; }
   .wa-chatbot-header {
     background: #075E54; color: #fff; padding: 14px 16px; font-weight: 600;
     display: flex; justify-content: space-between; align-items: center;
