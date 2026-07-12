@@ -54,6 +54,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       const collections = (data?.data?.collections?.nodes ?? [])
         .map((c: any) => ({
           title: c.title,
+          url: `https://${session.shop}/collections/${c.handle}`,
           products: (c.products?.nodes ?? [])
             .filter((p: any) => p.priceRangeV2?.minVariantPrice?.amount)
             .map((p: any) => ({
@@ -70,9 +71,11 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         enabled: true,
         collections,
         whatsappNumber: shop?.whatsappDisplayNumber ?? null,
-        title: chatbotSettings?.title ?? "Find your product",
-        tooltipText: chatbotSettings?.tooltipText ?? "Let's chat to find your product!",
-        logoUrl: chatbotSettings?.logoUrl ?? null,
+        widgetColor: chatbotSettings?.widgetColor ?? "#25D366",
+        headerText: chatbotSettings?.headerText ?? "Find your product",
+        teaserMessage: chatbotSettings?.teaserMessage ?? "Hello 👋 How can I help you?",
+        bubbleIconUrl: chatbotSettings?.bubbleIconUrl ?? null,
+        headerLogoUrl: chatbotSettings?.headerLogoUrl ?? null,
         position: chatbotSettings?.position ?? "bottom-right",
       });
     } catch (err) {
@@ -81,9 +84,11 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         enabled: true,
         collections: [],
         whatsappNumber: shop?.whatsappDisplayNumber ?? null,
-        title: chatbotSettings?.title ?? "Find your product",
-        tooltipText: chatbotSettings?.tooltipText ?? "Let's chat to find your product!",
-        logoUrl: chatbotSettings?.logoUrl ?? null,
+        widgetColor: chatbotSettings?.widgetColor ?? "#25D366",
+        headerText: chatbotSettings?.headerText ?? "Find your product",
+        teaserMessage: chatbotSettings?.teaserMessage ?? "Hello 👋 How can I help you?",
+        bubbleIconUrl: chatbotSettings?.bubbleIconUrl ?? null,
+        headerLogoUrl: chatbotSettings?.headerLogoUrl ?? null,
         position: chatbotSettings?.position ?? "bottom-right",
       });
     }

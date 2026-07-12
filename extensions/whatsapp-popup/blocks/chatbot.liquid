@@ -8,19 +8,29 @@
 {% endcomment %}
 
 <div id="wa-chatbot-bubble" class="wa-chatbot-bubble" style="display:none;">
-  <div id="wa-chatbot-tooltip" class="wa-chatbot-tooltip">Let's chat to find your product!</div>
+  <div id="wa-chatbot-tooltip" class="wa-chatbot-tooltip">Hello 👋 How can I help you?</div>
   <button id="wa-chatbot-icon" class="wa-chatbot-icon" aria-label="Open chat">💬</button>
 </div>
 
 <div id="wa-chatbot-panel" class="wa-chatbot-panel" style="display:none;">
   <div class="wa-chatbot-header">
-    <span>Find your product</span>
+    <span>
+      <img class="wa-chatbot-header-logo" style="display:none; width:24px; height:24px; border-radius:50%; object-fit:cover; vertical-align:middle; margin-right:6px;" alt="" />
+      <span class="wa-chatbot-header-text">Find your product</span>
+    </span>
     <button id="wa-chatbot-close" class="wa-chatbot-close" aria-label="Close">&times;</button>
   </div>
   <div id="wa-chatbot-messages" class="wa-chatbot-messages"></div>
   <div id="wa-chatbot-options" class="wa-chatbot-options"></div>
 </div>
 
+<script>
+window.__waChatbotContext = {
+  pageType: {{ request.page_type | json }},
+  collectionTitle: {{ collection.title | default: "" | json }},
+  productTitle: {{ product.title | default: "" | json }},
+};
+</script>
 <script>
 (function () {
   var bubble = document.getElementById('wa-chatbot-bubble');
@@ -47,14 +57,23 @@
         bubble.classList.add('wa-chatbot-bubble--left');
         panel.classList.add('wa-chatbot-panel--left');
       }
-      if (data.title) {
-        panel.querySelector('.wa-chatbot-header span').textContent = data.title;
+      if (data.widgetColor) {
+        icon.style.background = data.widgetColor;
+        panel.querySelector('.wa-chatbot-header').style.background = data.widgetColor;
       }
-      if (data.tooltipText) {
-        tooltip.textContent = data.tooltipText;
+      if (data.headerText) {
+        panel.querySelector('.wa-chatbot-header-text').textContent = data.headerText;
       }
-      if (data.logoUrl) {
-        icon.innerHTML = '<img src="' + data.logoUrl + '" alt="" style="width:32px;height:32px;border-radius:50%;object-fit:cover;" />';
+      if (data.headerLogoUrl) {
+        var headerLogo = panel.querySelector('.wa-chatbot-header-logo');
+        headerLogo.src = data.headerLogoUrl;
+        headerLogo.style.display = 'inline-block';
+      }
+      if (data.teaserMessage) {
+        tooltip.textContent = data.teaserMessage;
+      }
+      if (data.bubbleIconUrl) {
+        icon.innerHTML = '<img src="' + data.bubbleIconUrl + '" alt="" style="width:32px;height:32px;border-radius:50%;object-fit:cover;" />';
       }
 
       bubble.style.display = 'flex';
@@ -95,6 +114,16 @@
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
+  function addCollectionLink(collection) {
+    var link = document.createElement('a');
+    link.href = collection.url || '#';
+    link.target = '_blank';
+    link.className = 'wa-chatbot-collection-link';
+    link.textContent = 'Browse the full ' + collection.title + ' collection →';
+    messagesEl.appendChild(link);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
   function setOptions(options) {
     optionsEl.innerHTML = '';
     options.forEach(function (opt) {
@@ -111,14 +140,53 @@
 
   function startFlow() {
     messagesEl.innerHTML = '';
-    addMessage("Hi! I can help you find the right product. What are you interested in?", true);
 
     if (!chatData || chatData.collections.length === 0) {
+      addMessage("Hi! I can help you find the right product.", true);
       addMessage("Sorry, I couldn't load our catalog right now. Please browse the store directly.", true);
       setOptions([]);
       return;
     }
 
+    var ctx = window.__waChatbotContext || {};
+    var currentCollection = null;
+    if (ctx.pageType === 'collection' && ctx.collectionTitle) {
+      currentCollection = chatData.collections.find(function (c) {
+        return c.title.toLowerCase() === ctx.collectionTitle.toLowerCase();
+      });
+    } else if (ctx.pageType === 'product' && ctx.productTitle) {
+      // Find which collection this product belongs to, so we can offer the
+      // same "help me choose in this category" shortcut from a product page.
+      currentCollection = chatData.collections.find(function (c) {
+        return c.products.some(function (p) {
+          return p.title.toLowerCase() === ctx.productTitle.toLowerCase();
+        });
+      });
+    }
+
+    if (currentCollection) {
+      addMessage("Hi! I see you're browsing " + currentCollection.title + ". Want help finding the right one based on your budget?", true);
+      setOptions([
+        {
+          label: "Yes, help me choose",
+          action: function () {
+            state.collection = currentCollection;
+            askBudget();
+          },
+        },
+        {
+          label: "Show me other categories",
+          action: showCategoryList,
+        },
+      ]);
+      return;
+    }
+
+    addMessage("Hi! I can help you find the right product. What are you interested in?", true);
+    showCategoryList();
+  }
+
+  function showCategoryList() {
     setOptions(
       chatData.collections.map(function (c) {
         return {
@@ -169,11 +237,13 @@
     }
 
     matches.forEach(addProductCard);
+    addCollectionLink(state.collection);
 
     setTimeout(function () {
-      addMessage("Want to see more, or get help from a real person?", true);
+      addMessage("Want to see more, or talk to a real person?", true);
       var options = [
-        { label: "Start over", action: startFlow },
+        { label: "See more from this category", action: function () { askBudget(); } },
+        { label: "Browse another category", action: showCategoryList },
       ];
       if (chatData.whatsappNumber) {
         options.push({
@@ -181,6 +251,17 @@
           action: function () {
             var text = encodeURIComponent("Hi! I'm looking for " + state.collection.title + " products.");
             window.open('https://wa.me/' + chatData.whatsappNumber.replace('+', '') + '?text=' + text, '_blank');
+          },
+        });
+      } else {
+        // No WhatsApp connected yet — still offer a way to reach a human,
+        // using Shopify's conventional contact page path. If the store
+        // doesn't have a page at this URL, this will 404 — worth creating
+        // one at Online Store > Pages if it doesn't already exist.
+        options.push({
+          label: "Contact us",
+          action: function () {
+            window.open('/pages/contact', '_blank');
           },
         });
       }
@@ -251,6 +332,10 @@
   .wa-chatbot-product img { width: 50px; height: 50px; object-fit: cover; border-radius: 6px; }
   .wa-chatbot-product-title { font-size: 13px; font-weight: 600; }
   .wa-chatbot-product-price { font-size: 13px; color: #008060; }
+  .wa-chatbot-collection-link {
+    align-self: flex-start; font-size: 13px; color: #075E54; font-weight: 600;
+    text-decoration: none; padding: 4px 0;
+  }
   .wa-chatbot-options { padding: 10px; display: flex; flex-wrap: wrap; gap: 8px; background: #f5f5f5; }
   .wa-chatbot-option-btn {
     background: #fff; border: 1px solid #25D366; color: #075E54; border-radius: 16px;
