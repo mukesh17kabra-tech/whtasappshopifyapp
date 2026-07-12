@@ -56,29 +56,33 @@ const PLAN_FEATURES = {
     "Order confirmation messages",
     "Shipment tracking updates",
     "Storefront product finder chatbot",
-    "Up to 250 subscribers",
+    "Up to 100 subscribers",
+    "Up to 50 broadcast messages monthly",
   ],
   Growth: [
     "Everything in Basic",
     "Unlimited subscribers",
     "Marketing broadcasts",
     "CSV bulk import",
+    "Up to 500 subscribers",
+    "Up to 250 broadcast messages monthly",
   ],
   Pro: [
     "Everything in Growth",
     "Priority support",
-    "Multiple popup campaigns (coming soon)",
+    "Up to unlimited subscribers",
+    "Up to unlimited broadcast messages monthly",
   ],
 };
 
 const COMPARISON_ROWS = [
-  { feature: "Subscribers", Basic: "250", Growth: "Unlimited", Pro: "Unlimited" },
+  { feature: "Subscribers", Basic: "100", Growth: "500", Pro: "Unlimited" },
+  { feature: "Broadcast messages / month", Basic: "50", Growth: "250", Pro: "Unlimited" },
   { feature: "Order confirmations", Basic: "✓", Growth: "✓", Pro: "✓" },
   { feature: "Shipment tracking", Basic: "✓", Growth: "✓", Pro: "✓" },
   { feature: "Storefront chatbot", Basic: "✓", Growth: "✓", Pro: "✓" },
   { feature: "Marketing broadcasts", Basic: "✕", Growth: "✓", Pro: "✓" },
   { feature: "CSV bulk import", Basic: "✕", Growth: "✓", Pro: "✓" },
-  { feature: "Support", Basic: "Email", Growth: "Priority email", Pro: "Dedicated" },
 ];
 
 export default function Billing() {
@@ -100,8 +104,8 @@ export default function Billing() {
 
   const prices = {
     Basic: yearly ? "$3.99" : "$4.99",
-    Growth: yearly ? "$7.99" : "$9.99",
-    Pro: yearly ? "$15.19" : "$18.99",
+    Growth: yearly ? "$7.19" : "$8.99",
+    Pro: yearly ? "$11.99" : "$14.99",
   };
 
   const planKeys = {

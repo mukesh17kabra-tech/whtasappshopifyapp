@@ -163,6 +163,7 @@ model SupportMessage {
   shopId          String
   sender          String   // "merchant" | "developer"
   body            String
+  imageUrl        String?  // optional screenshot/image attachment
   createdAt       DateTime @default(now())
   readByMerchant  Boolean  @default(false)
   readByDeveloper Boolean  @default(false)

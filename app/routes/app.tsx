@@ -43,9 +43,12 @@ export default function App() {
 function SupportChatBubble() {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
+  const [pendingImage, setPendingImage] = useState("");
+  const [uploading, setUploading] = useState(false);
   const fetcher = useFetcher<{ messages: any[] }>();
   const sendFetcher = useFetcher();
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [messages, setMessages] = useState<any[]>([]);
 
   useEffect(() => {
@@ -64,17 +67,34 @@ function SupportChatBubble() {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
   }, [messages]);
 
+  const handleImageSelect = useCallback(async (file: File) => {
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/upload-image", { method: "POST", body: formData });
+      const data = await res.json();
+      if (res.ok && data.url) setPendingImage(data.url);
+    } catch {
+      // silently fail — merchant can just try attaching again
+    } finally {
+      setUploading(false);
+    }
+  }, []);
+
   const handleSend = useCallback(() => {
-    if (!text.trim()) return;
+    if (!text.trim() && !pendingImage) return;
     const formData = new FormData();
     formData.append("body", text);
+    formData.append("imageUrl", pendingImage);
     sendFetcher.submit(formData, { method: "post", action: "/app/support" });
     setMessages((prev) => [
       ...prev,
-      { id: `temp-${Date.now()}`, sender: "merchant", body: text, createdAt: new Date().toISOString() },
+      { id: `temp-${Date.now()}`, sender: "merchant", body: text, imageUrl: pendingImage || null, createdAt: new Date().toISOString() },
     ]);
     setText("");
-  }, [text, sendFetcher]);
+    setPendingImage("");
+  }, [text, pendingImage, sendFetcher]);
 
   return (
     <>
@@ -143,25 +163,64 @@ function SupportChatBubble() {
                   fontSize: 14,
                 }}
               >
+                {m.imageUrl && (
+                  <img
+                    src={m.imageUrl}
+                    alt="attachment"
+                    style={{ maxWidth: "100%", borderRadius: 6, marginBottom: m.body ? 6 : 0, display: "block", cursor: "pointer" }}
+                    onClick={() => window.open(m.imageUrl, "_blank")}
+                  />
+                )}
                 {m.body}
               </div>
             ))}
           </div>
-          <div style={{ display: "flex", gap: 8, padding: 10, borderTop: "1px solid #eee" }}>
-            <input
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") handleSend(); }}
-              placeholder="Type your message..."
-              style={{ flex: 1, padding: "8px 10px", border: "1px solid #c9cccf", borderRadius: 8, fontSize: 14 }}
-            />
-            <button
-              onClick={handleSend}
-              disabled={!text.trim()}
-              style={{ padding: "8px 14px", background: "#008060", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
-            >
-              Send
-            </button>
+          <div style={{ padding: 10, borderTop: "1px solid #eee" }}>
+            {pendingImage && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <img src={pendingImage} alt="preview" style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 6 }} />
+                <button
+                  onClick={() => setPendingImage("")}
+                  style={{ background: "none", border: "none", color: "#d82c0d", cursor: "pointer", fontSize: 13 }}
+                >
+                  Remove
+                </button>
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleImageSelect(file);
+                }}
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                style={{ width: 36, height: 36, border: "1px solid #c9cccf", borderRadius: 8, background: "#fff", cursor: "pointer", fontSize: 16, flexShrink: 0 }}
+                aria-label="Attach image"
+              >
+                📎
+              </button>
+              <input
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") handleSend(); }}
+                placeholder="Type your message..."
+                style={{ flex: 1, padding: "8px 10px", border: "1px solid #c9cccf", borderRadius: 8, fontSize: 14 }}
+              />
+              <button
+                onClick={handleSend}
+                disabled={!text.trim() && !pendingImage}
+                style={{ padding: "8px 14px", background: "#008060", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer" }}
+              >
+                Send
+              </button>
+            </div>
           </div>
         </div>
       )}
