@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
+import { sendWhatsappCustomMessage } from "~/services/whatsapp.server";
 
 // Exposed via Shopify's App Proxy, configured in shopify.app.toml as:
 //   [app_proxy] url = ".../api/proxy", subpath = "whatsapp-offers", prefix = "apps"
@@ -124,8 +125,82 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 }
 
 // POST /apps/whatsapp-offers/optin — storefront popup submits name + phone here
+// POST /apps/whatsapp-offers/chatbot-lead — chatbot's "talk to a real person" capture
 export async function action({ request, params }: ActionFunctionArgs) {
   const path = params["*"] ?? "";
+
+  if (path === "chatbot-lead") {
+    const { session } = await authenticate.public.appProxy(request);
+    if (!session) {
+      return Response.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
+    if (!shop) {
+      return Response.json({ error: "Shop not found" }, { status: 404 });
+    }
+
+    const body = await request.json();
+    const name: string | undefined = body.name;
+    const phoneNumber: string | undefined = body.phoneNumber;
+    const topic: string = body.topic || "";
+
+    if (!name || !name.trim()) {
+      return Response.json({ error: "Name is required" }, { status: 400 });
+    }
+    if (!phoneNumber || !/^\+[1-9]\d{7,14}$/.test(phoneNumber)) {
+      return Response.json(
+        { error: "That doesn't look like a valid WhatsApp number — include the country code, e.g. +919876543210." },
+        { status: 400 },
+      );
+    }
+
+    if (!shop.whatsappBridgeConnected) {
+      return Response.json(
+        { error: "WhatsApp isn't connected for this store yet — the merchant needs to connect it first." },
+        { status: 400 },
+      );
+    }
+
+    // Explicit opt-in via this flow — the visitor is actively asking to be
+    // contacted, so marketingConsent: true is appropriate here (unlike the
+    // order-placement auto-capture, which defaults to false).
+    await prisma.optin.upsert({
+      where: { shopId_phoneNumber: { shopId: shop.id, phoneNumber } },
+      update: { name: name.trim(), optedOutAt: null, marketingConsent: true },
+      create: {
+        shopId: shop.id,
+        phoneNumber,
+        name: name.trim(),
+        source: "chatbot",
+        marketingConsent: true,
+      },
+    });
+
+    // Send the real WhatsApp handoff message immediately, from the
+    // merchant's connected number. This is what actually starts a genuine
+    // WhatsApp conversation — the "chat" from here on happens in the
+    // visitor's own WhatsApp app and the merchant's WhatsApp Business app,
+    // not inside the website widget.
+    const greeting = topic
+      ? `Hi ${name.trim()}! Thanks for reaching out about ${topic} on our website. How can we help?`
+      : `Hi ${name.trim()}! Thanks for reaching out on our website. How can we help?`;
+
+    const result = await sendWhatsappCustomMessage({
+      shopId: shop.id,
+      to: phoneNumber,
+      text: greeting,
+    });
+
+    if (!result.success) {
+      return Response.json(
+        { error: "We saved your details, but couldn't send the WhatsApp message right now. We'll be in touch soon." },
+        { status: 200 },
+      );
+    }
+
+    return Response.json({ success: true });
+  }
 
   if (path !== "optin") {
     return Response.json({ error: "Not found" }, { status: 404 });

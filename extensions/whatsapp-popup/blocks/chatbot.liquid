@@ -54,7 +54,7 @@ window.__waChatbotContext = {
   var sendBtn = document.getElementById('wa-chatbot-send');
 
   var chatData = null; // fetched collections + whatsappNumber + settings
-  var state = { step: 'start', collection: null };
+  var state = { step: 'start', collection: null, leadStep: null, leadName: null, leadTopic: null };
 
   // Fetch config first — decides whether to show anything at all, and
   // applies the merchant's custom title/tooltip/logo/position.
@@ -263,11 +263,8 @@ window.__waChatbotContext = {
       ];
       if (chatData.whatsappNumber) {
         options.push({
-          label: "Chat with us on WhatsApp",
-          action: function () {
-            var text = encodeURIComponent("Hi! I'm looking for " + state.collection.title + " products.");
-            window.open('https://wa.me/' + chatData.whatsappNumber.replace('+', '') + '?text=' + text, '_blank');
-          },
+          label: "Talk to a real person",
+          action: function () { askRealPersonConsent(state.collection.title); },
         });
       } else {
         // No WhatsApp connected yet — still offer a way to reach a human,
@@ -283,6 +280,61 @@ window.__waChatbotContext = {
       }
       setOptions(options);
     }, 300);
+  }
+
+  // Step 1: confirm the visitor actually wants to be contacted, before
+  // asking for personal info.
+  function askRealPersonConsent(topic) {
+    addMessage("Sure! Want us to reach out to you on WhatsApp?", true);
+    setOptions([
+      { label: "Yes", action: function () { addMessage("Yes", false); askLeadName(topic); } },
+      { label: "No, never mind", action: function () { addMessage("No, never mind", false); setOptions([{ label: "Browse another category", action: showCategoryList }]); } },
+    ]);
+  }
+
+  // Step 2 & 3: capture name then phone via the existing text input, one at
+  // a time, reusing the search box rather than adding more UI.
+  function askLeadName(topic) {
+    setOptions([]);
+    addMessage("Great! What's your name?", true);
+    searchInput.placeholder = "Your name";
+    state.leadStep = 'name';
+    state.leadTopic = topic;
+    searchInput.focus();
+  }
+
+  function askLeadPhone() {
+    addMessage("Thanks, " + state.leadName + "! What's your WhatsApp number? (include country code, e.g. +919876543210)", true);
+    searchInput.placeholder = "+919876543210";
+    state.leadStep = 'phone';
+  }
+
+  function submitLead(phone) {
+    setOptions([]);
+    addMessage("Connecting you now...", true);
+
+    fetch('/apps/whatsapp-offers/chatbot-lead', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: state.leadName, phoneNumber: phone, topic: state.leadTopic || '' }),
+    })
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        if (data.success) {
+          addMessage("You're all set, " + state.leadName + "! Check your WhatsApp — we've sent you a message from our team.", true);
+        } else {
+          addMessage(data.error || "Something went wrong. Please check the number and try again.", true);
+          state.leadStep = 'phone';
+          searchInput.placeholder = "+919876543210";
+        }
+      })
+      .catch(function () {
+        addMessage("Network error — please try again.", true);
+        state.leadStep = 'phone';
+      })
+      .finally(function () {
+        setOptions([{ label: "Browse another category", action: showCategoryList }]);
+      });
   }
 
   function searchProducts(query) {
@@ -316,11 +368,8 @@ window.__waChatbotContext = {
       var options = [{ label: "Browse by category", action: showCategoryList }];
       if (chatData.whatsappNumber) {
         options.push({
-          label: "Chat with us on WhatsApp",
-          action: function () {
-            var text = encodeURIComponent("Hi! I'm looking for " + query + ".");
-            window.open('https://wa.me/' + chatData.whatsappNumber.replace('+', '') + '?text=' + text, '_blank');
-          },
+          label: "Talk to a real person",
+          action: function () { askRealPersonConsent(query); },
         });
       } else {
         options.push({
@@ -336,6 +385,22 @@ window.__waChatbotContext = {
     var value = searchInput.value;
     if (!value.trim()) return;
     searchInput.value = '';
+
+    if (state.leadStep === 'name') {
+      addMessage(value, false);
+      state.leadName = value.trim();
+      state.leadStep = null;
+      askLeadPhone();
+      return;
+    }
+    if (state.leadStep === 'phone') {
+      addMessage(value, false);
+      state.leadStep = null;
+      searchInput.placeholder = "Or type what you're looking for...";
+      submitLead(value.trim());
+      return;
+    }
+
     searchProducts(value);
   });
 
