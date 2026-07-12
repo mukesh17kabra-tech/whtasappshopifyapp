@@ -38,15 +38,11 @@ export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  // Dev-only bypass: directly sets a local flag instead of going through
-  // Shopify's Billing API. Use this only when billing.request() is blocked
-  // (e.g. some dev store configs return 403) — never a substitute for real
-  // billing once you're charging actual merchants.
   if (intent === "dev-set-plan") {
     const plan = String(formData.get("plan"));
     await prisma.shop.update({
       where: { id: shop.id },
-      data: { manualPlanOverride: plan === "Starter" ? null : plan },
+      data: { manualPlanOverride: plan },
     });
     return json({ success: true });
   }
@@ -55,14 +51,15 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 const PLAN_FEATURES = {
-  Starter: [
+  Basic: [
     "Popup number/name capture",
     "Order confirmation messages",
     "Shipment tracking updates",
-    "Up to 100 subscribers",
+    "Storefront product finder chatbot",
+    "Up to 250 subscribers",
   ],
   Growth: [
-    "Everything in Starter",
+    "Everything in Basic",
     "Unlimited subscribers",
     "Marketing broadcasts",
     "CSV bulk import",
@@ -75,12 +72,13 @@ const PLAN_FEATURES = {
 };
 
 const COMPARISON_ROWS = [
-  { feature: "Subscribers", Starter: "100", Growth: "Unlimited", Pro: "Unlimited" },
-  { feature: "Order confirmations", Starter: "✓", Growth: "✓", Pro: "✓" },
-  { feature: "Shipment tracking", Starter: "✓", Growth: "✓", Pro: "✓" },
-  { feature: "Marketing broadcasts", Starter: "✕", Growth: "✓", Pro: "✓" },
-  { feature: "CSV bulk import", Starter: "✕", Growth: "✓", Pro: "✓" },
-  { feature: "Support", Starter: "Email", Growth: "Priority email", Pro: "Dedicated" },
+  { feature: "Subscribers", Basic: "250", Growth: "Unlimited", Pro: "Unlimited" },
+  { feature: "Order confirmations", Basic: "✓", Growth: "✓", Pro: "✓" },
+  { feature: "Shipment tracking", Basic: "✓", Growth: "✓", Pro: "✓" },
+  { feature: "Storefront chatbot", Basic: "✓", Growth: "✓", Pro: "✓" },
+  { feature: "Marketing broadcasts", Basic: "✕", Growth: "✓", Pro: "✓" },
+  { feature: "CSV bulk import", Basic: "✕", Growth: "✓", Pro: "✓" },
+  { feature: "Support", Basic: "Email", Growth: "Priority email", Pro: "Dedicated" },
 ];
 
 export default function Billing() {
@@ -88,7 +86,7 @@ export default function Billing() {
   const submit = useSubmit();
   const [yearly, setYearly] = useState(false);
 
-  const effectivePlan = manualPlanOverride || (hasActivePayment ? activePlan : "Starter");
+  const effectivePlan = manualPlanOverride || (hasActivePayment ? activePlan : null);
 
   const handleDevSetPlan = useCallback(
     (plan: string) => {
@@ -100,13 +98,59 @@ export default function Billing() {
     [submit],
   );
 
-  const growthPrice = yearly ? "$7.99" : "$9.99";
-  const proPrice = yearly ? "$23.99" : "$29.99";
-  const growthPlanKey = yearly ? BILLING_PLANS.GROWTH_YEARLY : BILLING_PLANS.GROWTH;
-  const proPlanKey = yearly ? BILLING_PLANS.PRO_YEARLY : BILLING_PLANS.PRO;
+  const prices = {
+    Basic: yearly ? "$3.99" : "$4.99",
+    Growth: yearly ? "$7.99" : "$9.99",
+    Pro: yearly ? "$15.19" : "$18.99",
+  };
+
+  const planKeys = {
+    Basic: yearly ? BILLING_PLANS.BASIC_YEARLY : BILLING_PLANS.BASIC,
+    Growth: yearly ? BILLING_PLANS.GROWTH_YEARLY : BILLING_PLANS.GROWTH,
+    Pro: yearly ? BILLING_PLANS.PRO_YEARLY : BILLING_PLANS.PRO,
+  };
+
+  function renderCard(name: "Basic" | "Growth" | "Pro", popular?: boolean) {
+    const isCurrent = effectivePlan === planKeys[name] || effectivePlan === name;
+
+    return (
+      <Box width="33%" key={name}>
+        <Card>
+          <BlockStack gap="300">
+            <InlineStack align="space-between">
+              <Text as="h2" variant="headingLg">{name}</Text>
+              {popular && <Badge tone="attention">Most popular</Badge>}
+            </InlineStack>
+            <InlineStack gap="100" blockAlign="baseline">
+              <Text as="p" variant="heading2xl">{prices[name]}</Text>
+              <Text as="p" variant="bodySm" tone="subdued">/mo</Text>
+            </InlineStack>
+            <Text as="p" variant="bodySm" tone="subdued">7-day free trial, then billed {yearly ? "yearly" : "monthly"}.</Text>
+            <BlockStack gap="150">
+              {PLAN_FEATURES[name].map((f) => (
+                <Text key={f} as="p" variant="bodySm">✓ {f}</Text>
+              ))}
+            </BlockStack>
+            <Box paddingBlockStart="200">
+              {isCurrent ? (
+                <Button fullWidth disabled>✓ Current plan</Button>
+              ) : (
+                <Form method="post" action="/app/billing/subscribe">
+                  <input type="hidden" name="plan" value={planKeys[name]} />
+                  <Button submit variant={popular ? "primary" : undefined} fullWidth>
+                    Start {name} — 7 days free
+                  </Button>
+                </Form>
+              )}
+            </Box>
+          </BlockStack>
+        </Card>
+      </Box>
+    );
+  }
 
   return (
-    <Page title="Pricing plans" subtitle="Choose the plan that fits your store. Upgrade or downgrade anytime.">
+    <Page title="Pricing plans" subtitle="Every plan includes a 7-day free trial. Choose the plan that fits your store.">
       <BlockStack gap="400">
         <Banner tone="info">
           <strong>Test mode active</strong> — billing.isTest is set to true,
@@ -115,118 +159,25 @@ export default function Billing() {
           and app.broadcasts.tsx before charging real merchants.
         </Banner>
 
+        {!effectivePlan && (
+          <Banner tone="warning">
+            You don't have an active plan yet — choose one below to start
+            your 7-day free trial. All core features require an active
+            subscription; there's no free tier.
+          </Banner>
+        )}
+
         <Box>
           <ButtonGroup variant="segmented">
-            <Button pressed={!yearly} onClick={() => setYearly(false)}>
-              Monthly
-            </Button>
-            <Button pressed={yearly} onClick={() => setYearly(true)}>
-              Yearly · Save 20%
-            </Button>
+            <Button pressed={!yearly} onClick={() => setYearly(false)}>Monthly</Button>
+            <Button pressed={yearly} onClick={() => setYearly(true)}>Yearly · Save 20%</Button>
           </ButtonGroup>
         </Box>
 
         <InlineStack gap="400" align="start" wrap={false}>
-          <Box width="33%">
-            <Card>
-              <BlockStack gap="300">
-                <BlockStack gap="100">
-                  <Text as="h2" variant="headingLg">Starter</Text>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    Perfect for new stores getting started
-                  </Text>
-                </BlockStack>
-                <Text as="p" variant="heading2xl">Free</Text>
-                <BlockStack gap="150">
-                  {PLAN_FEATURES.Starter.map((f) => (
-                    <Text key={f} as="p" variant="bodySm">✓ {f}</Text>
-                  ))}
-                </BlockStack>
-                <Box paddingBlockStart="200">
-                  {effectivePlan === "Starter" ? (
-                    <Button fullWidth disabled>
-                      ✓ Current plan
-                    </Button>
-                  ) : (
-                    <Text as="p" variant="bodySm" tone="subdued">
-                      Downgrade by cancelling your paid plan below.
-                    </Text>
-                  )}
-                </Box>
-              </BlockStack>
-            </Card>
-          </Box>
-
-          <Box width="33%">
-            <Card>
-              <BlockStack gap="300">
-                <InlineStack align="space-between">
-                  <Text as="h2" variant="headingLg">Growth</Text>
-                  <Badge tone="attention">Most popular</Badge>
-                </InlineStack>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  For growing stores that want to reach customers directly
-                </Text>
-                <InlineStack gap="100" blockAlign="baseline">
-                  <Text as="p" variant="heading2xl">{growthPrice}</Text>
-                  <Text as="p" variant="bodySm" tone="subdued">/mo</Text>
-                </InlineStack>
-                <BlockStack gap="150">
-                  {PLAN_FEATURES.Growth.map((f) => (
-                    <Text key={f} as="p" variant="bodySm">✓ {f}</Text>
-                  ))}
-                </BlockStack>
-                <Box paddingBlockStart="200">
-                  {effectivePlan === BILLING_PLANS.GROWTH || effectivePlan === BILLING_PLANS.GROWTH_YEARLY ? (
-                    <Button fullWidth disabled>
-                      ✓ Current plan
-                    </Button>
-                  ) : (
-                    <Form method="post" action="/app/billing/subscribe">
-                      <input type="hidden" name="plan" value={growthPlanKey} />
-                      <Button submit variant="primary" fullWidth>
-                        Start Growth — 7 days free
-                      </Button>
-                    </Form>
-                  )}
-                </Box>
-              </BlockStack>
-            </Card>
-          </Box>
-
-          <Box width="33%">
-            <Card>
-              <BlockStack gap="300">
-                <Text as="h2" variant="headingLg">Pro</Text>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  For high-volume stores that need everything
-                </Text>
-                <InlineStack gap="100" blockAlign="baseline">
-                  <Text as="p" variant="heading2xl">{proPrice}</Text>
-                  <Text as="p" variant="bodySm" tone="subdued">/mo</Text>
-                </InlineStack>
-                <BlockStack gap="150">
-                  {PLAN_FEATURES.Pro.map((f) => (
-                    <Text key={f} as="p" variant="bodySm">✓ {f}</Text>
-                  ))}
-                </BlockStack>
-                <Box paddingBlockStart="200">
-                  {effectivePlan === BILLING_PLANS.PRO || effectivePlan === BILLING_PLANS.PRO_YEARLY ? (
-                    <Button fullWidth disabled>
-                      ✓ Current plan
-                    </Button>
-                  ) : (
-                    <Form method="post" action="/app/billing/subscribe">
-                      <input type="hidden" name="plan" value={proPlanKey} />
-                      <Button submit fullWidth>
-                        Start Pro — 7 days free
-                      </Button>
-                    </Form>
-                  )}
-                </Box>
-              </BlockStack>
-            </Card>
-          </Box>
+          {renderCard("Basic")}
+          {renderCard("Growth", true)}
+          {renderCard("Pro")}
         </InlineStack>
 
         <Card>
@@ -236,7 +187,7 @@ export default function Billing() {
               <thead>
                 <tr style={{ borderBottom: "1px solid #e1e3e5" }}>
                   <th style={{ textAlign: "left", padding: "8px 0", fontSize: 13, color: "#6b7177" }}>Feature</th>
-                  <th style={{ textAlign: "left", padding: "8px 0", fontSize: 13, color: "#6b7177" }}>Starter</th>
+                  <th style={{ textAlign: "left", padding: "8px 0", fontSize: 13, color: "#6b7177" }}>Basic</th>
                   <th style={{ textAlign: "left", padding: "8px 0", fontSize: 13, color: "#6b7177" }}>Growth</th>
                   <th style={{ textAlign: "left", padding: "8px 0", fontSize: 13, color: "#6b7177" }}>Pro</th>
                 </tr>
@@ -245,7 +196,7 @@ export default function Billing() {
                 {COMPARISON_ROWS.map((row) => (
                   <tr key={row.feature} style={{ borderBottom: "1px solid #f1f1f1" }}>
                     <td style={{ padding: "10px 0", fontSize: 14 }}>{row.feature}</td>
-                    <td style={{ padding: "10px 0", fontSize: 14 }}>{row.Starter}</td>
+                    <td style={{ padding: "10px 0", fontSize: 14 }}>{row.Basic}</td>
                     <td style={{ padding: "10px 0", fontSize: 14, color: "#008060", fontWeight: 600 }}>{row.Growth}</td>
                     <td style={{ padding: "10px 0", fontSize: 14, color: "#008060", fontWeight: 600 }}>{row.Pro}</td>
                   </tr>
@@ -257,40 +208,22 @@ export default function Billing() {
 
         <Card>
           <BlockStack gap="300">
-            <Text as="h3" variant="headingSm">
-              Developer testing — bypass Shopify billing
-            </Text>
+            <Text as="h3" variant="headingSm">Developer testing — bypass Shopify billing</Text>
             <Text as="p" variant="bodySm" tone="subdued">
               If the Billing API is blocked (403) on your dev store, use
               these buttons to simulate a plan locally for testing. This
-              only sets a flag on this shop's row — no real charge, and it's
-              separate from Shopify's actual billing state.
+              only sets a flag on this shop's row — no real charge.
             </Text>
             <ButtonGroup>
-              <Button
-                pressed={effectivePlan === "Starter"}
-                onClick={() => handleDevSetPlan("Starter")}
-              >
-                {effectivePlan === "Starter" && "✓ "}Starter
-              </Button>
-              <Button
-                pressed={effectivePlan === BILLING_PLANS.GROWTH}
-                onClick={() => handleDevSetPlan(BILLING_PLANS.GROWTH)}
-              >
-                {effectivePlan === BILLING_PLANS.GROWTH && "✓ "}Growth
-              </Button>
-              <Button
-                pressed={effectivePlan === BILLING_PLANS.PRO}
-                onClick={() => handleDevSetPlan(BILLING_PLANS.PRO)}
-              >
-                {effectivePlan === BILLING_PLANS.PRO && "✓ "}Pro
-              </Button>
+              <Button pressed={effectivePlan === "Basic"} onClick={() => handleDevSetPlan("Basic")}>Basic</Button>
+              <Button pressed={effectivePlan === "Growth"} onClick={() => handleDevSetPlan("Growth")}>Growth</Button>
+              <Button pressed={effectivePlan === "Pro"} onClick={() => handleDevSetPlan("Pro")}>Pro</Button>
             </ButtonGroup>
           </BlockStack>
         </Card>
 
         <Text as="p" variant="bodySm" tone="subdued" alignment="center">
-          All paid plans include a 7-day free trial. Cancel anytime. Payments processed securely by Shopify.
+          Every plan includes a 7-day free trial. Cancel anytime. Payments processed securely by Shopify.
         </Text>
       </BlockStack>
     </Page>

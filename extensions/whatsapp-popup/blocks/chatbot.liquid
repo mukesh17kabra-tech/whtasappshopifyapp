@@ -285,10 +285,18 @@ window.__waChatbotContext = {
   // Step 1: confirm the visitor actually wants to be contacted, before
   // asking for personal info.
   function askRealPersonConsent(topic) {
+    // Already captured this session — no need to ask again, just resend
+    // (or reference) the handoff instead of repeating the whole flow.
+    if (state.leadName && state.leadPhone) {
+      addMessage("You're already connected! We've sent a message to your WhatsApp — check there.", true);
+      setOptions([{ label: "Browse another category", action: showCategoryList }]);
+      return;
+    }
+
     addMessage("Sure! Want us to reach out to you on WhatsApp?", true);
     setOptions([
-      { label: "Yes", action: function () { addMessage("Yes", false); askLeadName(topic); } },
-      { label: "No, never mind", action: function () { addMessage("No, never mind", false); setOptions([{ label: "Browse another category", action: showCategoryList }]); } },
+      { label: "Yes", action: function () { askLeadName(topic); } },
+      { label: "No, never mind", action: function () { setOptions([{ label: "Browse another category", action: showCategoryList }]); } },
     ]);
   }
 
@@ -321,7 +329,12 @@ window.__waChatbotContext = {
       .then(function (res) { return res.json(); })
       .then(function (data) {
         if (data.success) {
-          addMessage("You're all set, " + state.leadName + "! Check your WhatsApp — we've sent you a message from our team.", true);
+          state.leadPhone = phone;
+          if (data.alreadyRegistered) {
+            addMessage("Welcome back, " + state.leadName + "! You're already registered — we've sent you a fresh message on WhatsApp, check there.", true);
+          } else {
+            addMessage("You're all set, " + state.leadName + "! Check your WhatsApp — we've sent you a message from our team.", true);
+          }
         } else {
           addMessage(data.error || "Something went wrong. Please check the number and try again.", true);
           state.leadStep = 'phone';

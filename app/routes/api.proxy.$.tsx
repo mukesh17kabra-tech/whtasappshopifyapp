@@ -165,6 +165,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
     // Explicit opt-in via this flow — the visitor is actively asking to be
     // contacted, so marketingConsent: true is appropriate here (unlike the
     // order-placement auto-capture, which defaults to false).
+    const existingOptin = await prisma.optin.findUnique({
+      where: { shopId_phoneNumber: { shopId: shop.id, phoneNumber } },
+    });
+    const alreadyRegistered = Boolean(existingOptin) && !existingOptin?.optedOutAt;
+
     await prisma.optin.upsert({
       where: { shopId_phoneNumber: { shopId: shop.id, phoneNumber } },
       update: { name: name.trim(), optedOutAt: null, marketingConsent: true },
@@ -182,9 +187,11 @@ export async function action({ request, params }: ActionFunctionArgs) {
     // WhatsApp conversation — the "chat" from here on happens in the
     // visitor's own WhatsApp app and the merchant's WhatsApp Business app,
     // not inside the website widget.
-    const greeting = topic
-      ? `Hi ${name.trim()}! Thanks for reaching out about ${topic} on our website. How can we help?`
-      : `Hi ${name.trim()}! Thanks for reaching out on our website. How can we help?`;
+    const greeting = alreadyRegistered
+      ? `Hi ${name.trim()}, welcome back! ${topic ? `Following up on ${topic} — ` : ""}how can we help?`
+      : topic
+        ? `Hi ${name.trim()}! Thanks for reaching out about ${topic} on our website. How can we help?`
+        : `Hi ${name.trim()}! Thanks for reaching out on our website. How can we help?`;
 
     const result = await sendWhatsappCustomMessage({
       shopId: shop.id,
@@ -199,7 +206,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
       );
     }
 
-    return Response.json({ success: true });
+    return Response.json({ success: true, alreadyRegistered });
   }
 
   if (path !== "optin") {
