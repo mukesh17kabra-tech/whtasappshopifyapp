@@ -6,7 +6,7 @@ application_url = "https://whtasappshopifyapp.vercel.app"
 embedded = true
 
 [access_scopes]
-scopes = "read_orders,read_customers,write_products,read_fulfillments"
+scopes = "read_orders,read_customers,write_products,read_fulfillments,read_discounts"
 
 [auth]
 redirect_urls = [
