@@ -1,5 +1,5 @@
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation, useFetcher } from "@remix-run/react";
+import { useLoaderData, useSubmit, useNavigation, useFetcher, useActionData } from "@remix-run/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Page,
@@ -76,7 +76,13 @@ export async function action({ request }: ActionFunctionArgs) {
 
   if (intent === "delete") {
     const id = String(formData.get("id"));
-    await prisma.template.delete({ where: { id } });
+    try {
+      await prisma.template.delete({ where: { id } });
+    } catch (err) {
+      // Most likely cause: already deleted (e.g. a double-click sent two
+      // delete requests) — not a real error worth crashing the page over.
+      console.warn(`Delete failed for template ${id}, likely already deleted`, err);
+    }
     return json({ success: true });
   }
 
@@ -91,36 +97,42 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const isOrderCategory = ORDER_CATEGORIES.some((c) => c.key === category);
 
-  if (isOrderCategory) {
-    const existing = await prisma.template.findFirst({
-      where: { shopId: shop.id, category },
-      orderBy: { createdAt: "desc" },
-    });
+  try {
+    if (isOrderCategory) {
+      const existing = await prisma.template.findFirst({
+        where: { shopId: shop.id, category },
+        orderBy: { createdAt: "desc" },
+      });
 
-    if (existing) {
-      await prisma.template.update({
-        where: { id: existing.id },
-        data: { body, imageUrl, name: name || existing.name },
-      });
+      if (existing) {
+        await prisma.template.update({
+          where: { id: existing.id },
+          data: { body, imageUrl, name: name || existing.name },
+        });
+      } else {
+        await prisma.template.create({
+          data: {
+            shopId: shop.id,
+            name: name || ORDER_CATEGORIES.find((c) => c.key === category)?.label || category,
+            body,
+            category,
+            imageUrl,
+            status: "active",
+          },
+        });
+      }
     } else {
+      if (!name) {
+        return json({ error: "Template name is required" }, { status: 400 });
+      }
       await prisma.template.create({
-        data: {
-          shopId: shop.id,
-          name: name || ORDER_CATEGORIES.find((c) => c.key === category)?.label || category,
-          body,
-          category,
-          imageUrl,
-          status: "active",
-        },
+        data: { shopId: shop.id, name, body, category: "MARKETING", imageUrl, status: "active" },
       });
     }
-  } else {
-    if (!name) {
-      return json({ error: "Template name is required" }, { status: 400 });
-    }
-    await prisma.template.create({
-      data: { shopId: shop.id, name, body, category: "MARKETING", imageUrl, status: "active" },
-    });
+  } catch (err) {
+    console.error("Failed to save template", err);
+    const detail = err instanceof Error ? err.message : String(err);
+    return json({ error: `Couldn't save template: ${detail}` }, { status: 500 });
   }
 
   return json({ success: true });
@@ -128,11 +140,13 @@ export async function action({ request }: ActionFunctionArgs) {
 
 export default function Templates() {
   const { marketingTemplates, orderTemplates, connected } = useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
   const [selectedTab, setSelectedTab] = useState(0);
 
   const isSaving = navigation.state === "submitting";
+  const saveError = actionData && "error" in actionData ? actionData.error : null;
 
   const handleDelete = useCallback(
     (id: string) => {
@@ -153,6 +167,8 @@ export default function Templates() {
             be composed here, but sending requires connecting first.
           </Banner>
         )}
+
+        {saveError && <Banner tone="critical">{saveError}</Banner>}
 
         <Tabs
           tabs={[
