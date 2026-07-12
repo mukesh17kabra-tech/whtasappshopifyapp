@@ -5,15 +5,12 @@ import { queueWhatsappJob } from "~/services/queue.server";
 
 // Shopify expects a response within ~5s. We write the event to Postgres
 // and enqueue a background job, then return 200 immediately. The actual
-// WhatsApp API call happens in the queue worker (see services/queue.server.ts),
-// never inline here.
+// WhatsApp API call happens in the queue worker, never inline here.
 export async function action({ request }: ActionFunctionArgs) {
   const { shop, payload, topic } = await authenticate.webhook(request);
 
   const shopRow = await prisma.shop.findUnique({ where: { shopDomain: shop } });
   if (!shopRow) {
-    // Shop not found locally (shouldn't normally happen) — ack anyway so
-    // Shopify doesn't retry indefinitely.
     return new Response(null, { status: 200 });
   }
 
@@ -21,23 +18,55 @@ export async function action({ request }: ActionFunctionArgs) {
   const phoneNumber = order?.customer?.phone || order?.phone || null;
 
   if (phoneNumber) {
+    const firstName = order?.customer?.first_name || "";
+    const lastName = order?.customer?.last_name || "";
+    const fullName = `${firstName} ${lastName}`.trim() || null;
+    const orderTotal = order?.total_price ? `${order.currency ?? ""} ${order.total_price}`.trim() : null;
+    const orderUrl = order?.order_status_url || null;
+
+    // Auto-add this customer to the Subscribers table so merchants can see
+    // everyone who's placed an order — but with marketingConsent: false,
+    // since placing an order isn't marketing opt-in. Utility messages
+    // (this order confirmation, shipping updates) still send regardless;
+    // only broadcast/marketing sends respect this flag. If this number
+    // already opted in via the popup, don't downgrade their consent.
+    await prisma.optin.upsert({
+      where: { shopId_phoneNumber: { shopId: shopRow.id, phoneNumber } },
+      update: { name: fullName ?? undefined },
+      create: {
+        shopId: shopRow.id,
+        phoneNumber,
+        name: fullName,
+        source: "order",
+        marketingConsent: false,
+      },
+    });
+
     await prisma.orderTracking.upsert({
       where: {
-        shopId_shopifyOrderId: {
-          shopId: shopRow.id,
-          shopifyOrderId: String(order.id),
-        },
+        shopId_shopifyOrderId: { shopId: shopRow.id, shopifyOrderId: String(order.id) },
       },
-      update: { status: "confirmed" },
+      update: {
+        status: "confirmed",
+        customerFirstName: firstName || null,
+        customerLastName: lastName || null,
+        orderNumber: order.name,
+        orderTotal,
+        orderUrl,
+      },
       create: {
         shopId: shopRow.id,
         shopifyOrderId: String(order.id),
         phoneNumber,
+        customerFirstName: firstName || null,
+        customerLastName: lastName || null,
+        orderNumber: order.name,
+        orderTotal,
+        orderUrl,
         status: "confirmed",
       },
     });
 
-    // Fire-and-forget: enqueue actual WhatsApp send to a background worker
     await queueWhatsappJob({
       type: "order_confirmation",
       shopId: shopRow.id,

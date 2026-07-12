@@ -14,18 +14,14 @@ import {
   Banner,
   Box,
   Select,
+  Checkbox,
 } from "@shopify/polaris";
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef } from "react";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
 
 const PAGE_SIZE = 25;
 
-// Common countries with their dial code and expected local-number digit
-// length (excluding the dial code), used to catch a country/number mismatch
-// immediately rather than silently saving something wrong. Not exhaustive —
-// covers the countries most likely to matter for this app's users; add more
-// as needed.
 const COUNTRIES = [
   { name: "India", iso: "IN", dialCode: "91", minLen: 10, maxLen: 10 },
   { name: "United States / Canada", iso: "US", dialCode: "1", minLen: 10, maxLen: 10 },
@@ -42,16 +38,10 @@ const COUNTRIES = [
   { name: "Other (enter full number with country code)", iso: "OTHER", dialCode: "", minLen: 6, maxLen: 14 },
 ];
 
-// Basic E.164-ish check: + followed by 8-15 digits. Same rule used on the
-// storefront popup's opt-in route, kept consistent here.
 function isValidPhone(phone: string): boolean {
   return /^\+[1-9]\d{7,14}$/.test(phone);
 }
 
-// Best-effort normalization: strips spaces/dashes, adds a '+' if someone
-// pasted a bare number. Doesn't guess country codes — if there's no '+',
-// we can't safely assume which country, so those get rejected instead of
-// silently mis-attributed.
 function normalizePhone(raw: string): string | null {
   const trimmed = raw.trim().replace(/[\s\-()]/g, "");
   if (!trimmed) return null;
@@ -67,30 +57,49 @@ export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
+  if (intent === "delete") {
+    const id = String(formData.get("id"));
+    const optin = await prisma.optin.findUnique({ where: { id } });
+    if (!optin || optin.shopId !== shop.id) return json({ error: "Not found" }, { status: 404 });
+    await prisma.optin.delete({ where: { id } });
+    return json({ success: true });
+  }
+
   if (intent === "toggle") {
     const id = String(formData.get("id"));
-    const toggleAction = formData.get("action"); // "optout" | "optin"
-
+    const toggleAction = formData.get("action");
     const optin = await prisma.optin.findUnique({ where: { id } });
-    if (!optin || optin.shopId !== shop.id) {
-      return json({ error: "Not found" }, { status: 404 });
-    }
-
+    if (!optin || optin.shopId !== shop.id) return json({ error: "Not found" }, { status: 404 });
     await prisma.optin.update({
       where: { id },
       data: { optedOutAt: toggleAction === "optout" ? new Date() : null },
     });
-
     return json({ success: true });
   }
 
-  if (intent === "delete") {
+  if (intent === "toggle-marketing") {
     const id = String(formData.get("id"));
     const optin = await prisma.optin.findUnique({ where: { id } });
-    if (!optin || optin.shopId !== shop.id) {
-      return json({ error: "Not found" }, { status: 404 });
-    }
-    await prisma.optin.delete({ where: { id } });
+    if (!optin || optin.shopId !== shop.id) return json({ error: "Not found" }, { status: 404 });
+    await prisma.optin.update({
+      where: { id },
+      data: { marketingConsent: !optin.marketingConsent },
+    });
+    return json({ success: true });
+  }
+
+  if (intent === "bulk-delete") {
+    const ids = formData.getAll("ids").map(String);
+    await prisma.optin.deleteMany({ where: { id: { in: ids }, shopId: shop.id } });
+    return json({ success: true });
+  }
+
+  if (intent === "bulk-optout") {
+    const ids = formData.getAll("ids").map(String);
+    await prisma.optin.updateMany({
+      where: { id: { in: ids }, shopId: shop.id },
+      data: { optedOutAt: new Date() },
+    });
     return json({ success: true });
   }
 
@@ -103,23 +112,20 @@ export async function action({ request }: ActionFunctionArgs) {
     const name = String(formData.get("name") ?? "").trim() || null;
     const isOther = dialCode === "";
 
-    if (!localNumber) {
-      return json({ error: "Enter a phone number." }, { status: 400 });
-    }
+    if (!localNumber) return json({ error: "Enter a phone number." }, { status: 400 });
 
     if (localNumber.length < minLen || localNumber.length > maxLen) {
       return json(
         {
           error: isOther
-            ? `That doesn't look like a complete number with country code — check the digits and try again.`
-            : `That number has ${localNumber.length} digits, but ${countryName} numbers should have ${minLen === maxLen ? minLen : `${minLen}-${maxLen}`} digits (not counting the country code). Double check the number or country selected.`,
+            ? "That doesn't look like a complete number with country code — check the digits and try again."
+            : `That number has ${localNumber.length} digits, but ${countryName} numbers should have ${minLen === maxLen ? minLen : `${minLen}-${maxLen}`} digits (not counting the country code).`,
         },
         { status: 400 },
       );
     }
 
     const phoneNumber = isOther ? `+${localNumber}` : `+${dialCode}${localNumber}`;
-
     if (!isValidPhone(phoneNumber)) {
       return json({ error: `"${phoneNumber}" doesn't look like a valid phone number.` }, { status: 400 });
     }
@@ -135,27 +141,14 @@ export async function action({ request }: ActionFunctionArgs) {
 
   if (intent === "add-csv") {
     const csvText = String(formData.get("csvText") ?? "");
-    // Accept either a plain list (one number per line) or a CSV with a
-    // header row containing a "phone" column — handles both common formats
-    // without requiring the merchant to format it a specific way.
-    const lines = csvText
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter(Boolean);
+    const lines = csvText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    if (lines.length === 0) return json({ error: "No rows found in the file." }, { status: 400 });
 
-    if (lines.length === 0) {
-      return json({ error: "No rows found in the file." }, { status: 400 });
-    }
-
-    // If the first line looks like a header (no digits at all), skip it.
     const firstLineHasDigits = /\d/.test(lines[0]);
     const dataLines = firstLineHasDigits ? lines : lines.slice(1);
-
     const results = { added: 0, skipped: 0, invalid: [] as string[] };
 
     for (const line of dataLines) {
-      // Take the first comma-separated column as phone, optional second
-      // column as name, in case it's a multi-column CSV.
       const columns = line.split(",").map((c) => c.trim());
       const firstColumn = columns[0];
       const nameColumn = columns[1] || null;
@@ -186,7 +179,7 @@ export async function action({ request }: ActionFunctionArgs) {
           });
           results.added++;
         }
-      } catch (err) {
+      } catch {
         results.invalid.push(firstColumn);
       }
     }
@@ -211,9 +204,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const page = Math.max(1, Number(url.searchParams.get("page") ?? "1"));
   const search = url.searchParams.get("q") ?? "";
 
-  if (!shop) {
-    return json({ optins: [], total: 0, page, search });
-  }
+  if (!shop) return json({ optins: [], total: 0, page, search });
 
   const where = {
     shopId: shop.id,
@@ -248,14 +239,16 @@ export default function Subscribers() {
   const navigation = useNavigation();
   const [, setSearchParams] = useSearchParams();
   const [query, setQuery] = useState(search);
-  const [countryIndex, setCountryIndex] = useState("0"); // default India
+  const [countryIndex, setCountryIndex] = useState("0");
   const [localNumber, setLocalNumber] = useState("");
   const [manualName, setManualName] = useState("");
   const [csvFileName, setCsvFileName] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const submit = useSubmit();
 
   const isSubmitting = navigation.state === "submitting";
+  const selectedCountry = COUNTRIES[Number(countryIndex)];
 
   const handleSearch = useCallback(
     (value: string) => {
@@ -264,8 +257,6 @@ export default function Subscribers() {
     },
     [setSearchParams],
   );
-
-  const selectedCountry = COUNTRIES[Number(countryIndex)];
 
   const handleAddManual = useCallback(() => {
     const formData = new FormData();
@@ -296,19 +287,58 @@ export default function Subscribers() {
     [submit],
   );
 
-  // Clear the CSV filename display once the upload completes, so the button
-  // is ready for another file.
-  useEffect(() => {
-    if (navigation.state === "idle" && csvFileName) {
-      const t = setTimeout(() => setCsvFileName(""), 3000);
-      return () => clearTimeout(t);
-    }
-  }, [navigation.state, csvFileName]);
+  const toggleSelectAll = useCallback(
+    (checked: boolean) => {
+      if (checked) {
+        setSelectedIds(new Set(optins.map((o) => o.id)));
+      } else {
+        setSelectedIds(new Set());
+      }
+    },
+    [optins],
+  );
+
+  const toggleSelectOne = useCallback((id: string, checked: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+
+  const handleBulkDelete = useCallback(() => {
+    if (selectedIds.size === 0) return;
+    const formData = new FormData();
+    formData.append("intent", "bulk-delete");
+    selectedIds.forEach((id) => formData.append("ids", id));
+    submit(formData, { method: "post" });
+    setSelectedIds(new Set());
+  }, [selectedIds, submit]);
+
+  const handleBulkOptOut = useCallback(() => {
+    if (selectedIds.size === 0) return;
+    const formData = new FormData();
+    formData.append("intent", "bulk-optout");
+    selectedIds.forEach((id) => formData.append("ids", id));
+    submit(formData, { method: "post" });
+    setSelectedIds(new Set());
+  }, [selectedIds, submit]);
+
+  const allSelected = optins.length > 0 && selectedIds.size === optins.length;
 
   const rows = optins.map((o) => [
+    <Checkbox
+      key={`${o.id}-check`}
+      label=""
+      labelHidden
+      checked={selectedIds.has(o.id)}
+      onChange={(checked) => toggleSelectOne(o.id, checked)}
+    />,
     o.name || "—",
     o.phoneNumber,
     o.source,
+    <MarketingToggle key={`${o.id}-mkt`} id={o.id} consent={o.marketingConsent} />,
     new Date(o.consentAt).toLocaleDateString(),
     o.optedOutAt ? "Opted out" : "Active",
     <InlineStack key={`${o.id}-actions`} gap="200">
@@ -324,9 +354,7 @@ export default function Subscribers() {
       <BlockStack gap="400">
         <Card>
           <BlockStack gap="400">
-            <Text as="h2" variant="headingMd">
-              Add subscribers
-            </Text>
+            <Text as="h2" variant="headingMd">Add subscribers</Text>
 
             {actionData && "error" in actionData && actionData.error && (
               <Banner tone="critical">{actionData.error}</Banner>
@@ -336,11 +364,7 @@ export default function Subscribers() {
                 Added {actionData.added} number{actionData.added === 1 ? "" : "s"}.
                 {"skipped" in actionData && actionData.skipped ? ` ${actionData.skipped} already existed.` : ""}
                 {"invalidCount" in actionData && actionData.invalidCount
-                  ? ` ${actionData.invalidCount} row(s) couldn't be read as valid numbers${
-                      actionData.invalidSample?.length
-                        ? ` (e.g. "${actionData.invalidSample[0]}")`
-                        : ""
-                    } — make sure numbers include a country code, e.g. +919876543210.`
+                  ? ` ${actionData.invalidCount} row(s) couldn't be read as valid numbers.`
                   : ""}
               </Banner>
             )}
@@ -348,9 +372,7 @@ export default function Subscribers() {
             <InlineStack gap="400" align="start" wrap>
               <Box minWidth="340px">
                 <BlockStack gap="200">
-                  <Text as="p" variant="bodyMd" fontWeight="medium">
-                    Add one number
-                  </Text>
+                  <Text as="p" variant="bodyMd" fontWeight="medium">Add one number</Text>
                   <InlineStack gap="200" blockAlign="end">
                     <Box minWidth="140px">
                       <TextField
@@ -386,19 +408,12 @@ export default function Subscribers() {
                       Add
                     </Button>
                   </InlineStack>
-                  <Text as="p" variant="bodySm" tone="subdued">
-                    {selectedCountry.dialCode
-                      ? `Enter just the local number — the +${selectedCountry.dialCode} country code is added automatically. We'll flag it if the digit count doesn't match ${selectedCountry.name}.`
-                      : "Enter the complete number including its country code, starting with +."}
-                  </Text>
                 </BlockStack>
               </Box>
 
               <Box minWidth="300px">
                 <BlockStack gap="200">
-                  <Text as="p" variant="bodyMd" fontWeight="medium">
-                    Bulk import from CSV
-                  </Text>
+                  <Text as="p" variant="bodyMd" fontWeight="medium">Bulk import from CSV</Text>
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -416,9 +431,7 @@ export default function Subscribers() {
                     {csvFileName && <Text as="span" variant="bodySm">{csvFileName}</Text>}
                   </InlineStack>
                   <Text as="p" variant="bodySm" tone="subdued">
-                    One phone number per row (with country code), optionally
-                    followed by a comma and the person's name. A header row
-                    is fine — it's detected and skipped automatically.
+                    One phone number per row, optionally with a name in a second column.
                   </Text>
                 </BlockStack>
               </Box>
@@ -426,50 +439,63 @@ export default function Subscribers() {
 
             <Banner tone="warning">
               Only import numbers that have actually consented to receive
-              WhatsApp messages from your store — WhatsApp and privacy law
-              (e.g. India's DPDP Act) require real opt-in, not just having
-              someone's number from an order or contact list.
+              WhatsApp messages — WhatsApp and privacy law (e.g. India's
+              DPDP Act) require real opt-in for marketing messages.
+              Customers captured automatically from orders default to
+              utility-only (no marketing) for this reason.
             </Banner>
           </BlockStack>
         </Card>
 
         <Card>
           <BlockStack gap="400">
-            <TextField
-              label="Search by phone number"
-              labelHidden
-              placeholder="Search phone number..."
-              value={query}
-              onChange={handleSearch}
-              autoComplete="off"
-            />
+            <InlineStack align="space-between">
+              <TextField
+                label="Search by phone number"
+                labelHidden
+                placeholder="Search phone number..."
+                value={query}
+                onChange={handleSearch}
+                autoComplete="off"
+              />
+              {selectedIds.size > 0 && (
+                <InlineStack gap="200">
+                  <Text as="span" variant="bodySm">{selectedIds.size} selected</Text>
+                  <Button onClick={handleBulkOptOut}>Opt out selected</Button>
+                  <Button tone="critical" onClick={handleBulkDelete}>Delete selected</Button>
+                </InlineStack>
+              )}
+            </InlineStack>
 
             {rows.length > 0 ? (
               <>
+                <InlineStack gap="200" blockAlign="center">
+                  <Checkbox
+                    label="Select all on this page"
+                    checked={allSelected}
+                    onChange={toggleSelectAll}
+                  />
+                </InlineStack>
                 <DataTable
-                  columnContentTypes={["text", "text", "text", "text", "text", "text"]}
-                  headings={["Name", "Phone Number", "Source", "Opted In", "Status", ""]}
+                  columnContentTypes={["text", "text", "text", "text", "text", "text", "text", "text"]}
+                  headings={["", "Name", "Phone Number", "Source", "Marketing", "Opted In", "Status", ""]}
                   rows={rows}
                 />
                 {totalPages > 1 && (
                   <Pagination
                     hasPrevious={page > 1}
-                    onPrevious={() =>
-                      setSearchParams({ q: query, page: String(page - 1) })
-                    }
+                    onPrevious={() => setSearchParams({ q: query, page: String(page - 1) })}
                     hasNext={page < totalPages}
-                    onNext={() =>
-                      setSearchParams({ q: query, page: String(page + 1) })
-                    }
+                    onNext={() => setSearchParams({ q: query, page: String(page + 1) })}
                   />
                 )}
               </>
             ) : (
               <EmptyState heading="No subscribers yet" image="">
                 <p>
-                  Once customers submit the WhatsApp popup on your storefront
-                  — or you add numbers manually or via CSV above — they'll
-                  show up here.
+                  Once customers submit the WhatsApp popup, place an order,
+                  or you add numbers manually or via CSV above, they'll show
+                  up here.
                 </p>
               </EmptyState>
             )}
@@ -482,7 +508,6 @@ export default function Subscribers() {
 
 function ToggleButton({ id, optedOut }: { id: string; optedOut: boolean }) {
   const submit = useSubmit();
-
   const handleClick = useCallback(() => {
     const formData = new FormData();
     formData.append("intent", "toggle");
@@ -505,8 +530,6 @@ function DeleteButton({ id }: { id: string }) {
   const handleClick = useCallback(() => {
     if (!confirming) {
       setConfirming(true);
-      // Auto-reset the confirm state after a few seconds so a stray later
-      // click doesn't delete something unintended.
       setTimeout(() => setConfirming(false), 4000);
       return;
     }
@@ -519,6 +542,22 @@ function DeleteButton({ id }: { id: string }) {
   return (
     <Button variant="plain" tone="critical" onClick={handleClick}>
       {confirming ? "Click again to confirm" : "Delete"}
+    </Button>
+  );
+}
+
+function MarketingToggle({ id, consent }: { id: string; consent: boolean }) {
+  const submit = useSubmit();
+  const handleClick = useCallback(() => {
+    const formData = new FormData();
+    formData.append("intent", "toggle-marketing");
+    formData.append("id", id);
+    submit(formData, { method: "post" });
+  }, [id, submit]);
+
+  return (
+    <Button variant="plain" tone={consent ? "success" : undefined} onClick={handleClick}>
+      {consent ? "✓ Yes" : "No — enable"}
     </Button>
   );
 }

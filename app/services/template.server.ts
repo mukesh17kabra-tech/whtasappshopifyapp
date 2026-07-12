@@ -18,8 +18,14 @@ export function renderTemplateBody(
   body: string,
   variables: TemplateVariables,
 ): string {
-  return Object.entries(variables).reduce((text, [key, value]) => {
+  const substituted = Object.entries(variables).reduce((text, [key, value]) => {
     if (value === undefined) return text;
     return text.split(`{${key}}`).join(value);
   }, body);
+
+  // Safety net: strip any {tag} that wasn't actually substituted (e.g. a
+  // merchant inserted {last_name} in a broadcast template, but we only have
+  // a single "name" field, not split first/last — without this, the raw
+  // "{last_name}" text would leak literally into the customer's message).
+  return substituted.replace(/\{[a-z_]+\}/g, "").replace(/\s{2,}/g, " ").trim();
 }

@@ -1,7 +1,7 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import { Receiver } from "@upstash/qstash";
 import prisma from "~/db.server";
-import { sendWhatsappTemplateMessage, sendWhatsappCustomMessage } from "~/services/whatsapp.server";
+import { sendWhatsappCustomMessage } from "~/services/whatsapp.server";
 import { renderTemplateBody } from "~/services/template.server";
 import type { WhatsappJob } from "~/services/queue.server";
 
@@ -10,9 +10,18 @@ const receiver = new Receiver({
   nextSigningKey: process.env.QSTASH_NEXT_SIGNING_KEY!,
 });
 
-// This route is called by QStash (not by the browser or Shopify).
-// It performs the real WhatsApp send (via the bridge service, scoped to
-// this shop's own connected WhatsApp number) and logs the result.
+// Built-in fallback text used only if a merchant hasn't composed their own
+// Order Notification template yet for a given category — so orders still
+// get *something* sent rather than nothing.
+const DEFAULT_ORDER_TEMPLATES: Record<string, string> = {
+  ORDER_CONFIRMATION: "Hi {first_name}, your order {order_number} has been confirmed! Total: {order_total}.",
+  SHIPPED: "Hi {first_name}, your order {order_number} has shipped! Track it here: {tracking_url}",
+  OUT_FOR_DELIVERY: "Hi {first_name}, your order {order_number} is out for delivery today!",
+  DELIVERED: "Hi {first_name}, your order {order_number} has been delivered. Enjoy!",
+  DELIVERY_ATTEMPTED: "Hi {first_name}, we attempted to deliver your order {order_number} but couldn't reach you. We'll try again soon.",
+  DELIVERY_FAILED: "Hi {first_name}, unfortunately delivery of your order {order_number} failed. Please contact us for help.",
+};
+
 export async function action({ request }: ActionFunctionArgs) {
   const bodyText = await request.text();
   const signature = request.headers.get("upstash-signature");
@@ -20,9 +29,7 @@ export async function action({ request }: ActionFunctionArgs) {
   if (signature) {
     try {
       const valid = await receiver.verify({ signature, body: bodyText });
-      if (!valid) {
-        return new Response("invalid signature", { status: 401 });
-      }
+      if (!valid) return new Response("invalid signature", { status: 401 });
     } catch (err) {
       console.error("QStash signature verification failed", err);
       return new Response("invalid signature", { status: 401 });
@@ -41,9 +48,6 @@ export async function action({ request }: ActionFunctionArgs) {
     return new Response("WhatsApp not connected for this shop", { status: 200 });
   }
 
-  // Defense in depth: re-check opt-out status right before sending, in case
-  // the customer opted out after the broadcast was queued but before this
-  // job ran (QStash jobs can sit in the queue for a bit under load).
   const optin = await prisma.optin.findUnique({
     where: { shopId_phoneNumber: { shopId: job.shopId, phoneNumber: job.phoneNumber } },
   });
@@ -53,60 +57,63 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   try {
-    let templateName: string;
-    let variables: Record<string, string> = {};
+    let renderedText: string;
+    let imageUrl: string | null = null;
+    let templateNameForLog: string;
 
-    if (job.type === "order_confirmation") {
-      templateName = "order_confirmation";
-      variables = { order_number: job.orderNumber ?? job.orderId };
-    } else if (job.type === "shipment_update") {
+    if (job.type === "broadcast_message") {
+      const template = await prisma.template.findUnique({ where: { id: job.templateId } });
+      if (!template) throw new Error(`Template ${job.templateId} not found`);
+
+      // Broadcasts only have first_name (from the popup's Name field) —
+      // no order context exists for a generic broadcast.
+      renderedText = renderTemplateBody(template.body, { first_name: optin?.name || "there" });
+      imageUrl = template.imageUrl;
+      templateNameForLog = template.name;
+    } else {
+      // order_confirmation or shipment_update — pull real order data and
+      // the merchant's own composed template for this category (falling
+      // back to a sensible default if they haven't made one yet).
       const tracking = await prisma.orderTracking.findFirst({
         where: { shopId: job.shopId, shopifyOrderId: job.orderId },
       });
-      templateName = tracking?.lastTemplateSent || "shipment_update";
-      variables = {
-        order_number: job.orderId,
-        tracking_url: job.trackingUrl ?? tracking?.trackingUrl ?? "",
-      };
-    } else {
-      templateName = job.templateId;
-    }
 
-    let result;
+      const category = job.type === "order_confirmation" ? "ORDER_CONFIRMATION" : (tracking?.lastTemplateSent || "SHIPPED");
 
-    if (job.type === "broadcast_message") {
-      const template = await prisma.template.findUnique({
-        where: { id: job.templateId },
+      const template = await prisma.template.findFirst({
+        where: { shopId: job.shopId, category },
+        orderBy: { createdAt: "desc" },
       });
 
-      if (!template) {
-        throw new Error(`Template ${job.templateId} not found`);
-      }
+      const body = template?.body || DEFAULT_ORDER_TEMPLATES[category] || "Update on your order {order_number}.";
+      imageUrl = template?.imageUrl ?? null;
+      templateNameForLog = template?.name || `(default ${category})`;
 
-      const renderedText = renderTemplateBody(template.body, {
-        first_name: optin?.name || "there",
-      });
-      result = await sendWhatsappCustomMessage({
-        shopId: job.shopId,
-        to: job.phoneNumber,
-        text: renderedText,
-        imageUrl: template.imageUrl,
-      });
-      templateName = template.name;
-    } else {
-      result = await sendWhatsappTemplateMessage({
-        shopId: job.shopId,
-        to: job.phoneNumber,
-        templateName,
-        variables,
+      renderedText = renderTemplateBody(body, {
+        first_name: tracking?.customerFirstName || optin?.name || "there",
+        last_name: tracking?.customerLastName || undefined,
+        order_id: job.orderId,
+        order_number: tracking?.orderNumber || job.orderNumber || job.orderId,
+        order_total: tracking?.orderTotal || undefined,
+        order_url: tracking?.orderUrl || undefined,
+        tracking_number: tracking?.trackingNumber || undefined,
+        tracking_company: tracking?.trackingCompany || undefined,
+        tracking_url: job.type === "shipment_update" ? (job.trackingUrl ?? tracking?.trackingUrl ?? undefined) : tracking?.trackingUrl || undefined,
       });
     }
+
+    const result = await sendWhatsappCustomMessage({
+      shopId: job.shopId,
+      to: job.phoneNumber,
+      text: renderedText,
+      imageUrl,
+    });
 
     await prisma.messageLog.create({
       data: {
         shopId: job.shopId,
         phoneNumber: job.phoneNumber,
-        templateUsed: templateName,
+        templateUsed: templateNameForLog,
         status: result.success ? "sent" : "failed",
         providerMessageId: result.messageId ?? null,
       },

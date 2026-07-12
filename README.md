@@ -243,3 +243,25 @@ Every `billing.check()` and `billing.request()` call currently has `isTest: true
 ### Adjusting prices/plans
 
 Edit the `billing` block in `app/shopify.server.ts` — amounts, currency, trial length, and interval are all there. Add a third plan by adding another key to `BILLING_PLANS` and a matching entry in the `billing` config object, then add it to `PLAN_DETAILS` in `app.billing.tsx`.
+
+## Marketing vs Order Notification templates, real store data, order-based subscribers
+
+Major rework based on real usage feedback:
+
+**Templates split into two tabs:**
+- **Marketing** — for broadcasts. Only `{first_name}` works as a variable (from the popup's Name field), since a broadcast has no single order tied to it. Product/Collection link and discount code are now **real dropdowns fetched live from your store** (`api.store-resources.tsx`, via Shopify's Admin GraphQL API) instead of free-text fields.
+- **Order Notifications** — one composer per fixed category (Order Confirmation, Shipped, Out for Delivery, Delivered, Delivery Attempted, Delivery Failed). Full variable set works here (`{order_number}`, `{tracking_url}`, `{last_name}`, etc.) since real order data exists. Saving replaces the existing template for that category rather than creating duplicates. If you haven't set one for a category, a sensible built-in default is used so orders still get *something* sent.
+
+**Fixed a real bug:** a merchant could insert `{last_name}` into a Marketing template, and since broadcasts only ever had a single combined `name` field, that literal `{last_name}` text leaked straight into the customer's message. `renderTemplateBody` now strips any unsubstituted `{tag}` as a safety net — nothing raw ever reaches a customer, and the Marketing tab no longer even offers variables it can't fill.
+
+**Subscribers now auto-populate from orders too.** `webhooks.orders.create.tsx` upserts an `Optin` row (name + phone) for every order placed, tagged `source: "order"`. These default to `marketingConsent: false` — placing an order isn't marketing opt-in under WhatsApp's rules or India's DPDP Act — but they still receive order confirmation/shipping updates regardless, since those are utility messages tied to their own order. Only popup/manual/CSV-added numbers default to marketing-eligible. Broadcasts now filter by `marketingConsent: true`, not just "not opted out."
+
+**Subscribers page**: added a select-all checkbox, bulk "Opt out selected" / "Delete selected" actions, and a per-row Marketing consent toggle so a merchant can manually upgrade an order-only contact to marketing-eligible if they get separate consent.
+
+## Deferred to a follow-up: WhatsApp chatbot builder + support chat
+
+Not built in this pass — flagged as genuinely large, separate features rather than rushed:
+- A configurable automated chat flow (ask customer interest/budget, suggest products/collections, "Let's chat with us" bubble on the storefront)
+- A direct support chat channel from the merchant to you (the app developer)
+
+Both are legitimate, valuable next features — worth their own dedicated build rather than bolting on incompletely here.

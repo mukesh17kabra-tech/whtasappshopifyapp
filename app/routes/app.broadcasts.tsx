@@ -39,7 +39,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     prisma.template.findMany({
       where: { shopId: shop.id, category: "MARKETING" },
     }),
-    prisma.optin.count({ where: { shopId: shop.id, optedOutAt: null } }),
+    prisma.optin.count({ where: { shopId: shop.id, optedOutAt: null, marketingConsent: true } }),
   ]);
 
   // Look up all templates referenced by past broadcasts (not just current
@@ -91,7 +91,7 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   const subscribers = await prisma.optin.findMany({
-    where: { shopId: shop.id, optedOutAt: null },
+    where: { shopId: shop.id, optedOutAt: null, marketingConsent: true },
     select: { phoneNumber: true },
   });
 

@@ -3,10 +3,11 @@ import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
 import { queueWhatsappJob } from "~/services/queue.server";
 
-// Handles both FULFILLMENTS_CREATE and FULFILLMENTS_UPDATE.
-// Shopify's fulfillment payload includes tracking_company, tracking_number,
-// tracking_url, and shipment_status (e.g. "in_transit", "out_for_delivery",
-// "delivered"). We map shipment_status to a WhatsApp template and send it.
+// Handles both FULFILLMENTS_CREATE and FULFILLMENTS_UPDATE. Maps Shopify's
+// shipment_status to one of our Order Template categories (see
+// app.templates.tsx / ORDER_TEMPLATE_CATEGORIES) — each merchant composes
+// their own wording for these in the Order Notifications tab; this webhook
+// just supplies the real order data to fill in at send time.
 export async function action({ request }: ActionFunctionArgs) {
   const { shop, payload, topic } = await authenticate.webhook(request);
 
@@ -16,8 +17,6 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   const fulfillment = payload as any;
-
-  // order_id is present directly on the fulfillment payload
   const shopifyOrderId = String(fulfillment.order_id ?? fulfillment.id);
   const trackingUrl: string | undefined =
     fulfillment.tracking_url ||
@@ -25,40 +24,28 @@ export async function action({ request }: ActionFunctionArgs) {
   const trackingNumber: string | undefined = fulfillment.tracking_number;
   const trackingCompany: string | undefined = fulfillment.tracking_company;
 
-  // Map Shopify's shipment_status to our own status + which template to send.
-  // shipment_status can be: null (just created), "in_transit", "out_for_delivery",
-  // "delivered", "failure", "attempted_delivery"
   const rawStatus: string | null = fulfillment.shipment_status ?? null;
-  const statusMap: Record<string, { status: string; template: string }> = {
-    in_transit: { status: "shipped", template: "shipment_update" },
-    out_for_delivery: { status: "out_for_delivery", template: "out_for_delivery" },
-    delivered: { status: "delivered", template: "order_delivered" },
-    attempted_delivery: { status: "delivery_attempted", template: "delivery_attempted" },
-    failure: { status: "delivery_failed", template: "delivery_failed" },
+  const statusMap: Record<string, { status: string; category: string }> = {
+    in_transit: { status: "shipped", category: "SHIPPED" },
+    out_for_delivery: { status: "out_for_delivery", category: "OUT_FOR_DELIVERY" },
+    delivered: { status: "delivered", category: "DELIVERED" },
+    attempted_delivery: { status: "delivery_attempted", category: "DELIVERY_ATTEMPTED" },
+    failure: { status: "delivery_failed", category: "DELIVERY_FAILED" },
   };
-  const mapped = rawStatus
-    ? statusMap[rawStatus]
-    : { status: "shipped", template: "shipment_update" }; // null status = fulfillment just created
+  const mapped = rawStatus ? statusMap[rawStatus] : { status: "shipped", category: "SHIPPED" };
 
   const existing = await prisma.orderTracking.findUnique({
-    where: {
-      shopId_shopifyOrderId: { shopId: shopRow.id, shopifyOrderId },
-    },
+    where: { shopId_shopifyOrderId: { shopId: shopRow.id, shopifyOrderId } },
   });
 
-  // Fall back to fulfillment's destination phone if we don't have it stored yet
-  const phoneNumber =
-    existing?.phoneNumber ||
-    fulfillment.destination?.phone ||
-    null;
+  const phoneNumber = existing?.phoneNumber || fulfillment.destination?.phone || null;
 
   if (!phoneNumber || !mapped) {
     console.log(`Skipping ${topic}: no phone number or unmapped status (${rawStatus})`);
     return new Response(null, { status: 200 });
   }
 
-  // Avoid sending duplicate messages for the same status
-  if (existing?.lastTemplateSent === mapped.template) {
+  if (existing?.lastTemplateSent === mapped.category) {
     return new Response(null, { status: 200 });
   }
 
@@ -67,7 +54,9 @@ export async function action({ request }: ActionFunctionArgs) {
     update: {
       status: mapped.status,
       trackingUrl: trackingUrl ?? existing?.trackingUrl,
-      lastTemplateSent: mapped.template,
+      trackingNumber: trackingNumber ?? existing?.trackingNumber,
+      trackingCompany: trackingCompany ?? existing?.trackingCompany,
+      lastTemplateSent: mapped.category,
     },
     create: {
       shopId: shopRow.id,
@@ -75,7 +64,9 @@ export async function action({ request }: ActionFunctionArgs) {
       phoneNumber,
       status: mapped.status,
       trackingUrl,
-      lastTemplateSent: mapped.template,
+      trackingNumber,
+      trackingCompany,
+      lastTemplateSent: mapped.category,
     },
   });
 

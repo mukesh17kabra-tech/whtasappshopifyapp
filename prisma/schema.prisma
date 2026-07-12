@@ -58,14 +58,20 @@ model Shop {
 }
 
 model Optin {
-  id           String    @id @default(cuid())
-  shop         Shop      @relation(fields: [shopId], references: [id])
-  shopId       String
-  phoneNumber  String    // E.164 format, e.g. +919876543210
-  name         String?   // captured from the popup alongside the number
-  consentAt    DateTime  @default(now())
-  source       String    // "popup" | "checkout" | "manual" | "csv_import"
-  optedOutAt   DateTime?
+  id               String    @id @default(cuid())
+  shop             Shop      @relation(fields: [shopId], references: [id])
+  shopId           String
+  phoneNumber      String    // E.164 format, e.g. +919876543210
+  name             String?   // captured from the popup or checkout
+  consentAt        DateTime  @default(now())
+  source           String    // "popup" | "checkout" | "manual" | "csv_import" | "order"
+  optedOutAt       DateTime?
+  // Whether this number can receive MARKETING broadcasts. Popup/manual/CSV
+  // default to true (explicit opt-in). Numbers captured automatically from
+  // an order default to false — placing an order isn't marketing consent
+  // under WhatsApp's rules or India's DPDP Act — but utility messages
+  // (order confirmation, shipping) still go out regardless of this flag.
+  marketingConsent Boolean   @default(true)
 
   @@unique([shopId, phoneNumber])
   @@index([shopId])
@@ -89,6 +95,13 @@ model OrderTracking {
   shopId           String
   shopifyOrderId   String
   phoneNumber      String
+  customerFirstName String?
+  customerLastName  String?
+  orderNumber      String?
+  orderTotal       String?
+  orderUrl         String?
+  trackingNumber   String?
+  trackingCompany  String?
   status           String   // "confirmed" | "shipped" | "out_for_delivery" | "delivered"
   trackingUrl      String?
   lastTemplateSent String?
