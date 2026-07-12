@@ -144,18 +144,23 @@ export default function WhatsappConnect() {
       fetcher.submit(formData, { method: "post" });
     }, 2000);
 
-    // Safety net: never spin forever, even in an unexpected failure mode.
-    // 20s is generous — the bridge normally responds with a QR within a
-    // couple seconds of a successful connect.
-    const timeout = setTimeout(() => {
-      setPolling(false);
-    }, 20000);
+    // Safety net only for the "waiting for a QR code to even appear" phase
+    // — that should be fast (a few seconds). Once a QR is showing, we're
+    // waiting on a human to pick up their phone and scan it, which can
+    // reasonably take a couple of minutes — no short cutoff applies then.
+    const timeout = qr
+      ? setTimeout(() => {
+          setPolling(false);
+        }, 5 * 60 * 1000) // generous overall cap once QR is shown
+      : setTimeout(() => {
+          setPolling(false);
+        }, 20000);
 
     return () => {
       clearInterval(interval);
       clearTimeout(timeout);
     };
-  }, [polling]);
+  }, [polling, qr]);
 
   useEffect(() => {
     if (fetcher.data && "error" in fetcher.data && fetcher.data.error) {
