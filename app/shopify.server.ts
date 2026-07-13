@@ -20,26 +20,38 @@ const shopify = shopifyApp({
   sessionStorage: new PrismaSessionStorage(prisma),
   distribution: AppDistribution.AppStore,
   billing: {
+    [BILLING_PLANS.BASIC]: {
+      amount: 4.99,
+      currencyCode: "USD",
+      interval: BillingInterval.Every30Days,
+      trialDays: 7,
+    },
+    [BILLING_PLANS.BASIC_YEARLY]: {
+      amount: 47.90, // ~20% off 4.99 x 12
+      currencyCode: "USD",
+      interval: BillingInterval.Annual,
+      trialDays: 7,
+    },
     [BILLING_PLANS.GROWTH]: {
-      amount: 9.99,
+      amount: 8.99,
       currencyCode: "USD",
       interval: BillingInterval.Every30Days,
       trialDays: 7,
     },
     [BILLING_PLANS.GROWTH_YEARLY]: {
-      amount: 95.90, // ~20% off 9.99 x 12
+      amount: 86.30, // ~20% off 8.99 x 12
       currencyCode: "USD",
       interval: BillingInterval.Annual,
       trialDays: 7,
     },
     [BILLING_PLANS.PRO]: {
-      amount: 29.99,
+      amount: 14.99,
       currencyCode: "USD",
       interval: BillingInterval.Every30Days,
       trialDays: 7,
     },
     [BILLING_PLANS.PRO_YEARLY]: {
-      amount: 287.90, // ~20% off 29.99 x 12
+      amount: 143.90, // ~20% off 14.99 x 12
       currencyCode: "USD",
       interval: BillingInterval.Annual,
       trialDays: 7,
@@ -74,6 +86,15 @@ const shopify = shopifyApp({
         update: { uninstalled: false },
         create: { shopDomain: session.shop },
       });
+
+      // CRITICAL: this actually tells Shopify to start sending webhook
+      // events (ORDERS_CREATE, FULFILLMENTS_UPDATE, etc.) to our callback
+      // URLs for this specific shop. Without this call, the `webhooks`
+      // config above only *describes* what we want — it never registers
+      // it with Shopify's API, so no webhook ever actually fires. This was
+      // missing since the beginning, which is why order confirmations and
+      // order-based subscriber capture never worked.
+      await shopify.registerWebhooks({ session });
     },
   },
 });

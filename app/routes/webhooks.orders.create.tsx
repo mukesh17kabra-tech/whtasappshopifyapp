@@ -15,7 +15,24 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   const order = payload as any;
-  const phoneNumber = order?.customer?.phone || order?.phone || null;
+  const rawPhoneNumber =
+    order?.customer?.phone ||
+    order?.phone ||
+    order?.shipping_address?.phone ||
+    order?.billing_address?.phone ||
+    null;
+
+  // Normalize to E.164 (+countrycode...) — Shopify sometimes stores phone
+  // numbers without a leading '+' even when a country code is present.
+  const phoneNumber = rawPhoneNumber
+    ? (rawPhoneNumber.trim().startsWith("+") ? rawPhoneNumber.trim() : `+${rawPhoneNumber.replace(/\D/g, "")}`)
+    : null;
+
+  if (!rawPhoneNumber) {
+    console.warn(
+      `Order ${order?.id} has no phone number anywhere (customer, order, shipping, or billing address) — skipping WhatsApp send.`,
+    );
+  }
 
   if (phoneNumber) {
     const firstName = order?.customer?.first_name || "";
