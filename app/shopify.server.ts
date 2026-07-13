@@ -91,10 +91,17 @@ const shopify = shopifyApp({
       // events (ORDERS_CREATE, FULFILLMENTS_UPDATE, etc.) to our callback
       // URLs for this specific shop. Without this call, the `webhooks`
       // config above only *describes* what we want — it never registers
-      // it with Shopify's API, so no webhook ever actually fires. This was
-      // missing since the beginning, which is why order confirmations and
-      // order-based subscriber capture never worked.
-      await shopify.registerWebhooks({ session });
+      // it with Shopify's API, so no webhook ever actually fires.
+      //
+      // Logged explicitly (success or failure) so this is visible in
+      // Vercel's runtime logs right at install time — search logs for
+      // "registerWebhooks" to confirm this ran for a given shop.
+      try {
+        const results = await shopify.registerWebhooks({ session });
+        console.log(`registerWebhooks succeeded for ${session.shop}:`, JSON.stringify(results));
+      } catch (err) {
+        console.error(`registerWebhooks FAILED for ${session.shop}:`, err);
+      }
     },
   },
 });

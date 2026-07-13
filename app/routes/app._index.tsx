@@ -1,5 +1,5 @@
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData } from "@remix-run/react";
+import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
+import { useLoaderData, useSubmit, useActionData, useNavigation } from "@remix-run/react";
 import {
   Page,
   Layout,
@@ -10,9 +10,25 @@ import {
   DataTable,
   Badge,
   EmptyState,
+  Button,
+  Banner,
+  InlineStack,
 } from "@shopify/polaris";
-import { authenticate } from "~/shopify.server";
+import shopify, { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
+
+export async function action({ request }: ActionFunctionArgs) {
+  const { session } = await authenticate.admin(request);
+
+  try {
+    const results = await shopify.registerWebhooks({ session });
+    console.log(`Manual re-register webhooks for ${session.shop}:`, JSON.stringify(results));
+    return json({ success: true, results });
+  } catch (err) {
+    console.error(`Manual re-register webhooks FAILED for ${session.shop}:`, err);
+    return json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+  }
+}
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
@@ -62,6 +78,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
 export default function Dashboard() {
   const { optinCount, messagesSent, messagesFailed, recentMessages } =
     useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>();
+  const submit = useSubmit();
+  const navigation = useNavigation();
+
+  const handleReRegister = () => {
+    submit({}, { method: "post" });
+  };
 
   const rows = recentMessages.map((m) => [
     m.phoneNumber,
@@ -75,6 +98,36 @@ export default function Dashboard() {
   return (
     <Page title="WhatsApp Offers Dashboard">
       <Layout>
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="200">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h3" variant="headingSm">
+                  Troubleshooting: webhook registration
+                </Text>
+                <Button onClick={handleReRegister} loading={navigation.state === "submitting"}>
+                  Re-register webhooks
+                </Button>
+              </InlineStack>
+              <Text as="p" variant="bodySm" tone="subdued">
+                If order confirmations or shipping updates aren't sending,
+                click this to re-tell Shopify to send order/fulfillment
+                events to this app — normally happens automatically on
+                install, this is a manual fallback for troubleshooting.
+              </Text>
+              {actionData && "success" in actionData && (
+                <Banner tone="success">
+                  Webhooks re-registered successfully. Check Vercel logs for
+                  the full response if you want to confirm exact topics.
+                </Banner>
+              )}
+              {actionData && "error" in actionData && (
+                <Banner tone="critical">Failed: {actionData.error}</Banner>
+              )}
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
         <Layout.Section>
           <InlineGrid columns={3} gap="400">
             <Card>

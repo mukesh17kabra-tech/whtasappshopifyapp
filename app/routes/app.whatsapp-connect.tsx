@@ -118,6 +118,19 @@ export default function WhatsappConnect() {
   const [qr, setQr] = useState<string | null>(null);
   const [polling, setPolling] = useState(false);
 
+  // On page load, always do a one-time reconciliation check — this catches
+  // the case where the bridge actually connected successfully (you scanned
+  // it) but the browser tab was refreshed or closed before that success was
+  // saved to the database, leaving a stale "not connected" state that
+  // otherwise only got fixed by clicking Connect again.
+  useEffect(() => {
+    if (initiallyConnected) return; // already known-connected, nothing to reconcile
+    const formData = new FormData();
+    formData.append("intent", "poll");
+    fetcher.submit(formData, { method: "post" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleConnect = useCallback(() => {
     const formData = new FormData();
     formData.append("intent", "connect");
@@ -134,7 +147,9 @@ export default function WhatsappConnect() {
     setPolling(false);
   }, [fetcher]);
 
-  // Poll status every 2s while attempting to connect
+  // Poll status every 1.5s while attempting to connect — fast enough that
+  // the UI flips to "Connected" within a couple seconds of scanning, not
+  // requiring a manual refresh or second click.
   useEffect(() => {
     if (!polling) return;
 
@@ -142,7 +157,7 @@ export default function WhatsappConnect() {
       const formData = new FormData();
       formData.append("intent", "poll");
       fetcher.submit(formData, { method: "post" });
-    }, 2000);
+    }, 1500);
 
     // Safety net only for the "waiting for a QR code to even appear" phase
     // — that should be fast (a few seconds). Once a QR is showing, we're
