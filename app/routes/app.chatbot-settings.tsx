@@ -7,7 +7,6 @@ import {
   Text,
   BlockStack,
   InlineStack,
-  InlineGrid,
   TextField,
   Button,
   Banner,
@@ -40,63 +39,22 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const formData = await request.formData();
   const enabled = formData.get("enabled") === "true";
-  const widgetColor = String(formData.get("widgetColor") ?? "#25D366").trim();
-  const headerText = String(formData.get("headerText") ?? "").trim();
-  const teaserMessage = String(formData.get("teaserMessage") ?? "").trim();
-  const bubbleIconUrl = String(formData.get("bubbleIconUrl") ?? "").trim() || null;
-  const headerLogoUrl = String(formData.get("headerLogoUrl") ?? "").trim() || null;
+  const title = String(formData.get("title") ?? "").trim();
+  const tooltipText = String(formData.get("tooltipText") ?? "").trim();
+  const logoUrl = String(formData.get("logoUrl") ?? "").trim() || null;
   const position = String(formData.get("position") ?? "bottom-right");
 
-  if (!headerText) {
-    return json({ error: "Header text can't be empty." }, { status: 400 });
-  }
-  if (!/^#[0-9a-fA-F]{6}$/.test(widgetColor)) {
-    return json({ error: "Widget color must be a valid hex code, e.g. #25D366." }, { status: 400 });
+  if (!title) {
+    return json({ error: "Title can't be empty." }, { status: 400 });
   }
 
   await prisma.chatbotSettings.upsert({
     where: { shopId: shop.id },
-    update: { enabled, widgetColor, headerText, teaserMessage, bubbleIconUrl, headerLogoUrl, position },
-    create: { shopId: shop.id, enabled, widgetColor, headerText, teaserMessage, bubbleIconUrl, headerLogoUrl, position },
+    update: { enabled, title, tooltipText, logoUrl, position },
+    create: { shopId: shop.id, enabled, title, tooltipText, logoUrl, position },
   });
 
   return json({ success: true });
-}
-
-function useImageUpload(onUploaded: (url: string) => void) {
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState("");
-
-  const handleSelect = useCallback(
-    async (file: File) => {
-      setUploading(true);
-      setError("");
-      try {
-        const formData = new FormData();
-        formData.append("file", file);
-        const res = await fetch("/api/upload-image", { method: "POST", body: formData });
-        let data;
-        try {
-          data = await res.json();
-        } catch {
-          setError("Upload failed — unexpected response from server.");
-          return;
-        }
-        if (!res.ok) {
-          setError(data.error || "Upload failed.");
-          return;
-        }
-        if (data.url) onUploaded(data.url);
-      } catch {
-        setError("Network error — check your connection and try again.");
-      } finally {
-        setUploading(false);
-      }
-    },
-    [onUploaded],
-  );
-
-  return { uploading, error, handleSelect };
 }
 
 export default function ChatbotSettingsPage() {
@@ -106,41 +64,63 @@ export default function ChatbotSettingsPage() {
   const navigation = useNavigation();
 
   const [enabled, setEnabled] = useState(settings?.enabled ?? true);
-  const [widgetColor, setWidgetColor] = useState(settings?.widgetColor ?? "#25D366");
-  const [headerText, setHeaderText] = useState(settings?.headerText ?? "Find your product");
-  const [teaserMessage, setTeaserMessage] = useState(settings?.teaserMessage ?? "Hello 👋 How can I help you?");
-  const [bubbleIconUrl, setBubbleIconUrl] = useState(settings?.bubbleIconUrl ?? "");
-  const [headerLogoUrl, setHeaderLogoUrl] = useState(settings?.headerLogoUrl ?? "");
+  const [title, setTitle] = useState(settings?.title ?? "Find your product");
+  const [tooltipText, setTooltipText] = useState(settings?.tooltipText ?? "Let's chat to find your product!");
+  const [logoUrl, setLogoUrl] = useState(settings?.logoUrl ?? "");
   const [position, setPosition] = useState(settings?.position ?? "bottom-right");
-
-  const bubbleUpload = useImageUpload(setBubbleIconUrl);
-  const headerUpload = useImageUpload(setHeaderLogoUrl);
-  const bubbleFileRef = useRef<HTMLInputElement | null>(null);
-  const headerFileRef = useRef<HTMLInputElement | null>(null);
+  const [imageUploading, setImageUploading] = useState(false);
+  const [imageUploadError, setImageUploadError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const isSaving = navigation.state === "submitting";
+
+  const handleImageSelect = useCallback(async (file: File) => {
+    setImageUploading(true);
+    setImageUploadError("");
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/upload-image", { method: "POST", body: formData });
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        setImageUploadError("Upload failed — unexpected response from server.");
+        return;
+      }
+      if (!res.ok) {
+        setImageUploadError(data.error || "Upload failed.");
+        return;
+      }
+      if (data.url) setLogoUrl(data.url);
+    } catch {
+      setImageUploadError("Network error — check your connection and try again.");
+    } finally {
+      setImageUploading(false);
+    }
+  }, []);
 
   const handleSave = useCallback(() => {
     const formData = new FormData();
     formData.append("enabled", String(enabled));
-    formData.append("widgetColor", widgetColor);
-    formData.append("headerText", headerText);
-    formData.append("teaserMessage", teaserMessage);
-    formData.append("bubbleIconUrl", bubbleIconUrl);
-    formData.append("headerLogoUrl", headerLogoUrl);
+    formData.append("title", title);
+    formData.append("tooltipText", tooltipText);
+    formData.append("logoUrl", logoUrl);
     formData.append("position", position);
     submit(formData, { method: "post" });
-  }, [enabled, widgetColor, headerText, teaserMessage, bubbleIconUrl, headerLogoUrl, position, submit]);
+  }, [enabled, title, tooltipText, logoUrl, position, submit]);
 
   return (
     <Page title="Chatbot Settings">
       <BlockStack gap="400">
         <Banner tone="info">
-          This is a rule-based product finder shown on your storefront — not
-          a live chat with a real person. It needs the "Product Finder
-          Chatbot" app embed turned on in your theme editor too — this page
-          controls its look and content, that toggle controls whether it
-          shows on your site at all.
+          This is a rule-based product finder (pick a category, pick a
+          budget, get suggestions) shown on your storefront — not a live
+          chat with a real person, and not connected to real WhatsApp
+          messages unless a visitor clicks the WhatsApp handoff button at
+          the end. It needs the "Product Finder Chatbot" app embed turned
+          on in your theme editor too — this page controls its content,
+          that toggle controls whether it shows on your site at all.
         </Banner>
 
         {actionData && "error" in actionData && actionData.error && (
@@ -161,114 +141,55 @@ export default function ChatbotSettingsPage() {
               </Text>
             </InlineStack>
 
-            <BlockStack gap="100">
-              <Text as="h2" variant="headingMd">Branding</Text>
-              <Text as="p" variant="bodySm" tone="subdued">
-                Customize how the chat widget looks on your storefront —
-                your color, your logo, your wording.
-              </Text>
-            </BlockStack>
+            <TextField label="Chatbot title" value={title} onChange={setTitle} autoComplete="off" />
 
-            <InlineGrid columns={2} gap="400">
-              <BlockStack gap="200">
-                <Text as="p" variant="bodyMd" fontWeight="medium">Widget color</Text>
-                <InlineStack gap="200" blockAlign="center">
-                  <input
-                    type="color"
-                    value={/^#[0-9a-fA-F]{6}$/.test(widgetColor) ? widgetColor : "#25D366"}
-                    onChange={(e) => setWidgetColor(e.target.value)}
-                    style={{ width: 44, height: 36, border: "1px solid #c9cccf", borderRadius: 6, padding: 2, cursor: "pointer" }}
-                  />
-                  <Box width="160px">
-                    <TextField label="" labelHidden value={widgetColor} onChange={setWidgetColor} autoComplete="off" placeholder="#25D366" />
-                  </Box>
-                </InlineStack>
-              </BlockStack>
+            <TextField
+              label="Tooltip message"
+              value={tooltipText}
+              onChange={setTooltipText}
+              autoComplete="off"
+              helpText="Shown briefly near the chat bubble a few seconds after page load."
+            />
 
-              <TextField label="Header text" value={headerText} onChange={setHeaderText} autoComplete="off" />
-            </InlineGrid>
+            <Select
+              label="Position"
+              options={[
+                { label: "Bottom right", value: "bottom-right" },
+                { label: "Bottom left", value: "bottom-left" },
+              ]}
+              value={position}
+              onChange={setPosition}
+            />
 
             <BlockStack gap="200">
-              <Text as="p" variant="bodyMd" fontWeight="medium">Teaser message</Text>
-              <Text as="p" variant="bodySm" tone="subdued">
-                Pops up next to the bubble a few seconds after the page
-                loads, before anyone clicks — like WhatsApp's chat widget.
-              </Text>
-              <TextField label="" labelHidden value={teaserMessage} onChange={setTeaserMessage} autoComplete="off" />
-            </BlockStack>
-
-            <InlineGrid columns={2} gap="400">
-              <BlockStack gap="200">
-                <Text as="p" variant="bodyMd" fontWeight="medium">Widget position</Text>
-                <Select
-                  label=""
-                  labelHidden
-                  options={[
-                    { label: "Bottom right", value: "bottom-right" },
-                    { label: "Bottom left", value: "bottom-left" },
-                  ]}
-                  value={position}
-                  onChange={setPosition}
-                />
-              </BlockStack>
-
-              <BlockStack gap="200">
-                <Text as="p" variant="bodyMd" fontWeight="medium">Chat bubble icon</Text>
-                <Text as="p" variant="bodySm" tone="subdued">
-                  Replaces the default 💬 icon (recommend a square logo)
-                </Text>
-                <input
-                  ref={bubbleFileRef}
-                  type="file"
-                  accept="image/*"
-                  style={{ display: "none" }}
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) bubbleUpload.handleSelect(file);
-                  }}
-                />
-                <InlineStack gap="200" blockAlign="center">
-                  {bubbleIconUrl ? (
-                    <Thumbnail source={bubbleIconUrl} alt="Bubble icon" size="small" />
-                  ) : (
-                    <div style={{ width: 40, height: 40, border: "1px dashed #c9cccf", borderRadius: 8 }} />
-                  )}
-                  <Button onClick={() => bubbleFileRef.current?.click()} loading={bubbleUpload.uploading}>
-                    Upload
-                  </Button>
-                  {bubbleIconUrl && (
-                    <Button variant="plain" tone="critical" onClick={() => setBubbleIconUrl("")}>Remove</Button>
-                  )}
-                </InlineStack>
-                {bubbleUpload.error && <Text as="p" variant="bodySm" tone="critical">{bubbleUpload.error}</Text>}
-              </BlockStack>
-            </InlineGrid>
-
-            <BlockStack gap="200">
-              <Text as="p" variant="bodyMd" fontWeight="medium">Header logo</Text>
-              <Text as="p" variant="bodySm" tone="subdued">
-                Shown next to the header text inside the chat window
-              </Text>
+              <Text as="p" variant="bodyMd" fontWeight="medium">Logo (optional)</Text>
               <input
-                ref={headerFileRef}
+                ref={fileInputRef}
                 type="file"
                 accept="image/*"
                 style={{ display: "none" }}
                 onChange={(e) => {
                   const file = e.target.files?.[0];
-                  if (file) headerUpload.handleSelect(file);
+                  if (file) handleImageSelect(file);
                 }}
               />
               <InlineStack gap="200" blockAlign="center">
-                {headerLogoUrl && <Thumbnail source={headerLogoUrl} alt="Header logo" size="small" />}
-                <Button onClick={() => headerFileRef.current?.click()} loading={headerUpload.uploading}>
-                  Upload
+                <Button onClick={() => fileInputRef.current?.click()} loading={imageUploading}>
+                  {logoUrl ? "Change logo" : "Upload logo"}
                 </Button>
-                {headerLogoUrl && (
-                  <Button variant="plain" tone="critical" onClick={() => setHeaderLogoUrl("")}>Remove</Button>
+                {logoUrl && (
+                  <>
+                    <Thumbnail source={logoUrl} alt="Chatbot logo" size="small" />
+                    <Button variant="plain" tone="critical" onClick={() => setLogoUrl("")}>Remove</Button>
+                  </>
                 )}
               </InlineStack>
-              {headerUpload.error && <Text as="p" variant="bodySm" tone="critical">{headerUpload.error}</Text>}
+              {imageUploadError && (
+                <Text as="p" variant="bodySm" tone="critical">{imageUploadError}</Text>
+              )}
+              <Text as="p" variant="bodySm" tone="subdued">
+                Shown as the chat bubble icon instead of the default 💬 emoji, if set.
+              </Text>
             </BlockStack>
 
             <Box>

@@ -296,13 +296,3 @@ New "Chatbot Settings" page for the storefront Product Finder Chatbot:
 These are fetched live by `chatbot.liquid` from the same `/apps/whatsapp-offers/chatbot-data` endpoint used for product data — one request gets both the catalog and the appearance settings.
 
 **Architecture clarification, worth restating:** this chatbot is a website widget only. It does not send or receive real WhatsApp messages during the conversation — only the final "Chat with us on WhatsApp" button opens a real WhatsApp link. A genuinely different feature — an automated bot that replies to real incoming WhatsApp messages on your connected number — would need its own dedicated build (conversation state per phone number, reusing the bridge's inbound webhook). Flagged as a clear next step if wanted, not built in this pass.
-
-## Chatbot "Talk to a real person" — real WhatsApp handoff, honestly scoped
-
-When a visitor picks "Talk to a real person": Yes/No confirm → type name → type WhatsApp number (validated) → both captured into `Optin` (`source: "chatbot"`, `marketingConsent: true` since it's explicit opt-in) → an actual WhatsApp message is sent immediately via the bridge, from the merchant's connected number, to the visitor's number.
-
-**What this is:** a real WhatsApp conversation genuinely starts between the merchant's business number and the visitor's own phone — not a redirect link, an actual message sent server-side.
-
-**What this deliberately is NOT (yet):** a live two-way chat rendered inside the website widget itself. Once that first message sends, the conversation continues in the visitor's own WhatsApp app and the merchant's WhatsApp Business app — not inside the site. Building true in-website live relay (visitor keeps typing on the site, merchant sees/replies from their phone, responses flow back into the widget in real time) is a meaningfully bigger, separate feature — it requires solving how to route a merchant's WhatsApp reply back to the correct visitor's browser session when the merchant's phone is a single inbox potentially juggling many simultaneous visitors. Worth building properly as its own task if wanted, rather than a fragile first pass here.
-
-New endpoint: `POST /apps/whatsapp-offers/chatbot-lead` — validates name + phone, does the Optin upsert, sends the handoff message, added to the same `api.proxy.$.tsx` dispatcher.

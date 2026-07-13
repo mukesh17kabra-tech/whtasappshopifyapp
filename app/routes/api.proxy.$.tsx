@@ -1,7 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
-import { sendWhatsappCustomMessage } from "~/services/whatsapp.server";
 
 // Exposed via Shopify's App Proxy, configured in shopify.app.toml as:
 //   [app_proxy] url = ".../api/proxy", subpath = "whatsapp-offers", prefix = "apps"
@@ -55,7 +54,6 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       const collections = (data?.data?.collections?.nodes ?? [])
         .map((c: any) => ({
           title: c.title,
-          url: `https://${session.shop}/collections/${c.handle}`,
           products: (c.products?.nodes ?? [])
             .filter((p: any) => p.priceRangeV2?.minVariantPrice?.amount)
             .map((p: any) => ({
@@ -72,11 +70,9 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         enabled: true,
         collections,
         whatsappNumber: shop?.whatsappDisplayNumber ?? null,
-        widgetColor: chatbotSettings?.widgetColor ?? "#25D366",
-        headerText: chatbotSettings?.headerText ?? "Find your product",
-        teaserMessage: chatbotSettings?.teaserMessage ?? "Hello 👋 How can I help you?",
-        bubbleIconUrl: chatbotSettings?.bubbleIconUrl ?? null,
-        headerLogoUrl: chatbotSettings?.headerLogoUrl ?? null,
+        title: chatbotSettings?.title ?? "Find your product",
+        tooltipText: chatbotSettings?.tooltipText ?? "Let's chat to find your product!",
+        logoUrl: chatbotSettings?.logoUrl ?? null,
         position: chatbotSettings?.position ?? "bottom-right",
       });
     } catch (err) {
@@ -85,11 +81,9 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
         enabled: true,
         collections: [],
         whatsappNumber: shop?.whatsappDisplayNumber ?? null,
-        widgetColor: chatbotSettings?.widgetColor ?? "#25D366",
-        headerText: chatbotSettings?.headerText ?? "Find your product",
-        teaserMessage: chatbotSettings?.teaserMessage ?? "Hello 👋 How can I help you?",
-        bubbleIconUrl: chatbotSettings?.bubbleIconUrl ?? null,
-        headerLogoUrl: chatbotSettings?.headerLogoUrl ?? null,
+        title: chatbotSettings?.title ?? "Find your product",
+        tooltipText: chatbotSettings?.tooltipText ?? "Let's chat to find your product!",
+        logoUrl: chatbotSettings?.logoUrl ?? null,
         position: chatbotSettings?.position ?? "bottom-right",
       });
     }
@@ -125,89 +119,8 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 }
 
 // POST /apps/whatsapp-offers/optin — storefront popup submits name + phone here
-// POST /apps/whatsapp-offers/chatbot-lead — chatbot's "talk to a real person" capture
 export async function action({ request, params }: ActionFunctionArgs) {
   const path = params["*"] ?? "";
-
-  if (path === "chatbot-lead") {
-    const { session } = await authenticate.public.appProxy(request);
-    if (!session) {
-      return Response.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
-    if (!shop) {
-      return Response.json({ error: "Shop not found" }, { status: 404 });
-    }
-
-    const body = await request.json();
-    const name: string | undefined = body.name;
-    const phoneNumber: string | undefined = body.phoneNumber;
-    const topic: string = body.topic || "";
-
-    if (!name || !name.trim()) {
-      return Response.json({ error: "Name is required" }, { status: 400 });
-    }
-    if (!phoneNumber || !/^\+[1-9]\d{7,14}$/.test(phoneNumber)) {
-      return Response.json(
-        { error: "That doesn't look like a valid WhatsApp number — include the country code, e.g. +919876543210." },
-        { status: 400 },
-      );
-    }
-
-    if (!shop.whatsappBridgeConnected) {
-      return Response.json(
-        { error: "WhatsApp isn't connected for this store yet — the merchant needs to connect it first." },
-        { status: 400 },
-      );
-    }
-
-    // Explicit opt-in via this flow — the visitor is actively asking to be
-    // contacted, so marketingConsent: true is appropriate here (unlike the
-    // order-placement auto-capture, which defaults to false).
-    const existingOptin = await prisma.optin.findUnique({
-      where: { shopId_phoneNumber: { shopId: shop.id, phoneNumber } },
-    });
-    const alreadyRegistered = Boolean(existingOptin) && !existingOptin?.optedOutAt;
-
-    await prisma.optin.upsert({
-      where: { shopId_phoneNumber: { shopId: shop.id, phoneNumber } },
-      update: { name: name.trim(), optedOutAt: null, marketingConsent: true },
-      create: {
-        shopId: shop.id,
-        phoneNumber,
-        name: name.trim(),
-        source: "chatbot",
-        marketingConsent: true,
-      },
-    });
-
-    // Send the real WhatsApp handoff message immediately, from the
-    // merchant's connected number. This is what actually starts a genuine
-    // WhatsApp conversation — the "chat" from here on happens in the
-    // visitor's own WhatsApp app and the merchant's WhatsApp Business app,
-    // not inside the website widget.
-    const greeting = alreadyRegistered
-      ? `Hi ${name.trim()}, welcome back! ${topic ? `Following up on ${topic} — ` : ""}how can we help?`
-      : topic
-        ? `Hi ${name.trim()}! Thanks for reaching out about ${topic} on our website. How can we help?`
-        : `Hi ${name.trim()}! Thanks for reaching out on our website. How can we help?`;
-
-    const result = await sendWhatsappCustomMessage({
-      shopId: shop.id,
-      to: phoneNumber,
-      text: greeting,
-    });
-
-    if (!result.success) {
-      return Response.json(
-        { error: "We saved your details, but couldn't send the WhatsApp message right now. We'll be in touch soon." },
-        { status: 200 },
-      );
-    }
-
-    return Response.json({ success: true, alreadyRegistered });
-  }
 
   if (path !== "optin") {
     return Response.json({ error: "Not found" }, { status: 404 });

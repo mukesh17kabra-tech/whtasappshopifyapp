@@ -1,6 +1,5 @@
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, Form, useSearchParams } from "@remix-run/react";
-import { useState, useRef } from "react";
 import prisma from "~/db.server";
 
 function checkAuth(request: Request): boolean {
@@ -59,10 +58,9 @@ export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
   const shopId = String(formData.get("shopId"));
   const body = String(formData.get("body") ?? "").trim();
-  const imageUrl = String(formData.get("imageUrl") ?? "").trim() || null;
-  if (!body && !imageUrl) return json({ error: "Message can't be empty" }, { status: 400 });
+  if (!body) return json({ error: "Message can't be empty" }, { status: 400 });
 
-  await prisma.supportMessage.create({ data: { shopId, sender: "developer", body, imageUrl } });
+  await prisma.supportMessage.create({ data: { shopId, sender: "developer", body } });
 
   return json({ success: true });
 }
@@ -71,24 +69,6 @@ export default function DeveloperSupport() {
   const { shops, thread, selectedShopId } = useLoaderData<typeof loader>();
   const [searchParams] = useSearchParams();
   const key = searchParams.get("key");
-  const [pendingImage, setPendingImage] = useState("");
-  const [uploading, setUploading] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  const handleImageSelect = async (file: File) => {
-    setUploading(true);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await fetch(`/api/upload-image?devKey=${key}`, { method: "POST", body: formData });
-      const data = await res.json();
-      if (res.ok && data.url) setPendingImage(data.url);
-    } catch {
-      // ignore — merchant/developer can retry the attach
-    } finally {
-      setUploading(false);
-    }
-  };
 
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "sans-serif" }}>
@@ -121,7 +101,7 @@ export default function DeveloperSupport() {
         {selectedShopId ? (
           <>
             <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 8 }}>
-              {thread.map((m: any) => (
+              {thread.map((m) => (
                 <div
                   key={m.id}
                   style={{
@@ -134,61 +114,20 @@ export default function DeveloperSupport() {
                     padding: "8px 12px",
                   }}
                 >
-                  {m.imageUrl && (
-                    <img
-                      src={m.imageUrl}
-                      alt="attachment"
-                      style={{ maxWidth: "100%", borderRadius: 6, marginBottom: m.body ? 6 : 0, display: "block", cursor: "pointer" }}
-                      onClick={() => window.open(m.imageUrl, "_blank")}
-                    />
-                  )}
                   {m.body}
                 </div>
               ))}
             </div>
-            <Form
-              method="post"
-              style={{ display: "flex", flexDirection: "column", gap: 8, padding: 16, borderTop: "1px solid #ddd" }}
-              onSubmit={() => setTimeout(() => setPendingImage(""), 0)}
-            >
+            <Form method="post" style={{ display: "flex", gap: 8, padding: 16, borderTop: "1px solid #ddd" }}>
               <input type="hidden" name="shopId" value={selectedShopId} />
-              <input type="hidden" name="imageUrl" value={pendingImage} />
-              {pendingImage && (
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <img src={pendingImage} alt="preview" style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 6 }} />
-                  <button type="button" onClick={() => setPendingImage("")} style={{ background: "none", border: "none", color: "#d82c0d", cursor: "pointer" }}>
-                    Remove
-                  </button>
-                </div>
-              )}
-              <div style={{ display: "flex", gap: 8 }}>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  style={{ display: "none" }}
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) handleImageSelect(file);
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploading}
-                  style={{ width: 40, border: "1px solid #ccc", borderRadius: 8, background: "#fff", cursor: "pointer" }}
-                >
-                  📎
-                </button>
-                <input
-                  name="body"
-                  placeholder="Reply..."
-                  style={{ flex: 1, padding: 10, border: "1px solid #ccc", borderRadius: 8 }}
-                />
-                <button type="submit" style={{ padding: "10px 20px", background: "#008060", color: "#fff", border: "none", borderRadius: 8 }}>
-                  Send
-                </button>
-              </div>
+              <input
+                name="body"
+                placeholder="Reply..."
+                style={{ flex: 1, padding: 10, border: "1px solid #ccc", borderRadius: 8 }}
+              />
+              <button type="submit" style={{ padding: "10px 20px", background: "#008060", color: "#fff", border: "none", borderRadius: 8 }}>
+                Send
+              </button>
             </Form>
           </>
         ) : (

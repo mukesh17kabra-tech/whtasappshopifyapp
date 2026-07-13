@@ -32,11 +32,10 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const formData = await request.formData();
   const body = String(formData.get("body") ?? "").trim();
-  const imageUrl = String(formData.get("imageUrl") ?? "").trim() || null;
-  if (!body && !imageUrl) return json({ error: "Message can't be empty" }, { status: 400 });
+  if (!body) return json({ error: "Message can't be empty" }, { status: 400 });
 
   await prisma.supportMessage.create({
-    data: { shopId: shop.id, sender: "merchant", body, imageUrl },
+    data: { shopId: shop.id, sender: "merchant", body },
   });
 
   return json({ success: true });
@@ -125,9 +124,6 @@ export default function Support() {
                     padding: "8px 12px",
                   }}
                 >
-                  {m.imageUrl && (
-                    <img src={m.imageUrl} alt="attachment" style={{ maxWidth: "100%", borderRadius: 6, marginBottom: m.body ? 6 : 0, display: "block" }} />
-                  )}
                   <Text as="p" variant="bodyMd">{m.body}</Text>
                 </div>
                 <Text as="p" variant="bodySm" tone="subdued" alignment={m.sender === "merchant" ? "end" : "start"}>

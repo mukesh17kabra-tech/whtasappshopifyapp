@@ -17,21 +17,18 @@ import {
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
 import { queueWhatsappJob } from "~/services/queue.server";
-import { BROADCAST_ELIGIBLE_PLANS } from "~/billing-plans";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session, billing } = await authenticate.admin(request);
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
 
-  const { hasActivePayment, appSubscriptions } = await billing.check({ isTest: true });
-  const onEligiblePlan = hasActivePayment && BROADCAST_ELIGIBLE_PLANS.includes(appSubscriptions[0]?.name ?? "");
+  const { hasActivePayment } = await billing.check({ isTest: true });
 
   if (!shop) {
-    return json({ broadcasts: [], templates: [], subscriberCount: 0, hasActivePayment: onEligiblePlan });
+    return json({ broadcasts: [], templates: [], subscriberCount: 0, hasActivePayment });
   }
 
-  // Dev bypass also respects the tier — only Growth/Pro unlock broadcasts
-  const effectivelyPaid = onEligiblePlan || BROADCAST_ELIGIBLE_PLANS.includes(shop.manualPlanOverride ?? "");
+  const effectivelyPaid = hasActivePayment || Boolean(shop.manualPlanOverride);
 
   const [broadcasts, templates, subscriberCount] = await Promise.all([
     prisma.broadcast.findMany({
@@ -77,9 +74,8 @@ export async function action({ request }: ActionFunctionArgs) {
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
   if (!shop) return json({ error: "Shop not found" }, { status: 404 });
 
-  const { hasActivePayment, appSubscriptions } = await billing.check({ isTest: true });
-  const onEligiblePlan = hasActivePayment && BROADCAST_ELIGIBLE_PLANS.includes(appSubscriptions[0]?.name ?? "");
-  const effectivelyPaidForSend = onEligiblePlan || BROADCAST_ELIGIBLE_PLANS.includes(shop.manualPlanOverride ?? "");
+  const { hasActivePayment } = await billing.check({ isTest: true });
+  const effectivelyPaidForSend = hasActivePayment || Boolean(shop.manualPlanOverride);
   if (!effectivelyPaidForSend) {
     return json(
       { error: "Marketing broadcasts require the Growth or Pro plan. Upgrade on the Billing page." },

@@ -7,24 +7,18 @@ import { authenticate } from "~/shopify.server";
 // project is on Vercel — just add the Blob integration in your Vercel
 // project dashboard to get a BLOB_READ_WRITE_TOKEN).
 export async function action({ request }: ActionFunctionArgs) {
-  const url = new URL(request.url);
-  const devKey = url.searchParams.get("devKey");
-  const isDeveloper = Boolean(process.env.DEVELOPER_SUPPORT_SECRET) && devKey === process.env.DEVELOPER_SUPPORT_SECRET;
-
-  if (!isDeveloper) {
-    try {
-      await authenticate.admin(request);
-    } catch (err) {
-      // authenticate.admin throws a redirect Response when the session is
-      // missing/expired. Returning that raw breaks the client's res.json()
-      // call silently (this was the actual upload bug) — return proper JSON
-      // instead so the UI can show a real error.
-      console.error("Auth failed on image upload", err);
-      return Response.json(
-        { error: "Session expired — please reload the app and try again." },
-        { status: 401 },
-      );
-    }
+  try {
+    await authenticate.admin(request);
+  } catch (err) {
+    // authenticate.admin throws a redirect Response when the session is
+    // missing/expired. Returning that raw breaks the client's res.json()
+    // call silently (this was the actual upload bug) — return proper JSON
+    // instead so the UI can show a real error.
+    console.error("Auth failed on image upload", err);
+    return Response.json(
+      { error: "Session expired — please reload the app and try again." },
+      { status: 401 },
+    );
   }
 
   const formData = await request.formData();

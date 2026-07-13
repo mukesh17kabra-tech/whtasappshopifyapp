@@ -8,39 +8,19 @@
 {% endcomment %}
 
 <div id="wa-chatbot-bubble" class="wa-chatbot-bubble" style="display:none;">
-  <div id="wa-chatbot-tooltip" class="wa-chatbot-tooltip">Hello 👋 How can I help you?</div>
+  <div id="wa-chatbot-tooltip" class="wa-chatbot-tooltip">Let's chat to find your product!</div>
   <button id="wa-chatbot-icon" class="wa-chatbot-icon" aria-label="Open chat">💬</button>
 </div>
 
 <div id="wa-chatbot-panel" class="wa-chatbot-panel" style="display:none;">
   <div class="wa-chatbot-header">
-    <span>
-      <img class="wa-chatbot-header-logo" width="24" height="24" style="display:none; width:24px; height:24px; border-radius:50%; object-fit:cover; vertical-align:middle; margin-right:6px;" alt="" />
-      <span class="wa-chatbot-header-text">Find your product</span>
-    </span>
+    <span>Find your product</span>
     <button id="wa-chatbot-close" class="wa-chatbot-close" aria-label="Close">&times;</button>
   </div>
   <div id="wa-chatbot-messages" class="wa-chatbot-messages"></div>
   <div id="wa-chatbot-options" class="wa-chatbot-options"></div>
-  <div class="wa-chatbot-input-row">
-    <input
-      id="wa-chatbot-input"
-      type="text"
-      class="wa-chatbot-input"
-      placeholder="Or type what you're looking for..."
-      autocomplete="off"
-    />
-    <button id="wa-chatbot-send" class="wa-chatbot-send-btn" aria-label="Send">➤</button>
-  </div>
 </div>
 
-<script>
-window.__waChatbotContext = {
-  pageType: {{ request.page_type | json }},
-  collectionTitle: {{ collection.title | default: "" | json }},
-  productTitle: {{ product.title | default: "" | json }},
-};
-</script>
 <script>
 (function () {
   var bubble = document.getElementById('wa-chatbot-bubble');
@@ -50,11 +30,9 @@ window.__waChatbotContext = {
   var closeBtn = document.getElementById('wa-chatbot-close');
   var messagesEl = document.getElementById('wa-chatbot-messages');
   var optionsEl = document.getElementById('wa-chatbot-options');
-  var searchInput = document.getElementById('wa-chatbot-input');
-  var sendBtn = document.getElementById('wa-chatbot-send');
 
   var chatData = null; // fetched collections + whatsappNumber + settings
-  var state = { step: 'start', collection: null, leadStep: null, leadName: null, leadTopic: null };
+  var state = { step: 'start', collection: null };
 
   // Fetch config first — decides whether to show anything at all, and
   // applies the merchant's custom title/tooltip/logo/position.
@@ -69,27 +47,14 @@ window.__waChatbotContext = {
         bubble.classList.add('wa-chatbot-bubble--left');
         panel.classList.add('wa-chatbot-panel--left');
       }
-      if (data.widgetColor) {
-        icon.style.background = data.widgetColor;
-        panel.querySelector('.wa-chatbot-header').style.background = data.widgetColor;
-        sendBtn.style.background = data.widgetColor;
-        var styleTag = document.createElement('style');
-        styleTag.textContent = '.wa-chatbot-option-btn { border-color: ' + data.widgetColor + ' !important; color: ' + data.widgetColor + ' !important; }';
-        document.head.appendChild(styleTag);
+      if (data.title) {
+        panel.querySelector('.wa-chatbot-header span').textContent = data.title;
       }
-      if (data.headerText) {
-        panel.querySelector('.wa-chatbot-header-text').textContent = data.headerText;
+      if (data.tooltipText) {
+        tooltip.textContent = data.tooltipText;
       }
-      if (data.headerLogoUrl) {
-        var headerLogo = panel.querySelector('.wa-chatbot-header-logo');
-        headerLogo.src = data.headerLogoUrl;
-        headerLogo.style.display = 'inline-block';
-      }
-      if (data.teaserMessage) {
-        tooltip.textContent = data.teaserMessage;
-      }
-      if (data.bubbleIconUrl) {
-        icon.innerHTML = '<img src="' + data.bubbleIconUrl + '" alt="" style="width:32px;height:32px;border-radius:50%;object-fit:cover;" />';
+      if (data.logoUrl) {
+        icon.innerHTML = '<img src="' + data.logoUrl + '" alt="" style="width:32px;height:32px;border-radius:50%;object-fit:cover;" />';
       }
 
       bubble.style.display = 'flex';
@@ -130,16 +95,6 @@ window.__waChatbotContext = {
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
-  function addCollectionLink(collection) {
-    var link = document.createElement('a');
-    link.href = collection.url || '#';
-    link.target = '_blank';
-    link.className = 'wa-chatbot-collection-link';
-    link.textContent = 'Browse the full ' + collection.title + ' collection →';
-    messagesEl.appendChild(link);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
-  }
-
   function setOptions(options) {
     optionsEl.innerHTML = '';
     options.forEach(function (opt) {
@@ -156,53 +111,14 @@ window.__waChatbotContext = {
 
   function startFlow() {
     messagesEl.innerHTML = '';
+    addMessage("Hi! I can help you find the right product. What are you interested in?", true);
 
     if (!chatData || chatData.collections.length === 0) {
-      addMessage("Hi! I can help you find the right product.", true);
       addMessage("Sorry, I couldn't load our catalog right now. Please browse the store directly.", true);
       setOptions([]);
       return;
     }
 
-    var ctx = window.__waChatbotContext || {};
-    var currentCollection = null;
-    if (ctx.pageType === 'collection' && ctx.collectionTitle) {
-      currentCollection = chatData.collections.find(function (c) {
-        return c.title.toLowerCase() === ctx.collectionTitle.toLowerCase();
-      });
-    } else if (ctx.pageType === 'product' && ctx.productTitle) {
-      // Find which collection this product belongs to, so we can offer the
-      // same "help me choose in this category" shortcut from a product page.
-      currentCollection = chatData.collections.find(function (c) {
-        return c.products.some(function (p) {
-          return p.title.toLowerCase() === ctx.productTitle.toLowerCase();
-        });
-      });
-    }
-
-    if (currentCollection) {
-      addMessage("Hi! I see you're browsing " + currentCollection.title + ". Want help finding the right one based on your budget?", true);
-      setOptions([
-        {
-          label: "Yes, help me choose",
-          action: function () {
-            state.collection = currentCollection;
-            askBudget();
-          },
-        },
-        {
-          label: "Show me other categories",
-          action: showCategoryList,
-        },
-      ]);
-      return;
-    }
-
-    addMessage("Hi! I can help you find the right product. Pick a category below, or just type what you're looking for.", true);
-    showCategoryList();
-  }
-
-  function showCategoryList() {
     setOptions(
       chatData.collections.map(function (c) {
         return {
@@ -253,175 +169,24 @@ window.__waChatbotContext = {
     }
 
     matches.forEach(addProductCard);
-    addCollectionLink(state.collection);
 
     setTimeout(function () {
-      addMessage("Want to see more, or talk to a real person?", true);
+      addMessage("Want to see more, or get help from a real person?", true);
       var options = [
-        { label: "See more from this category", action: function () { askBudget(); } },
-        { label: "Browse another category", action: showCategoryList },
+        { label: "Start over", action: startFlow },
       ];
       if (chatData.whatsappNumber) {
         options.push({
-          label: "Talk to a real person",
-          action: function () { askRealPersonConsent(state.collection.title); },
-        });
-      } else {
-        // No WhatsApp connected yet — still offer a way to reach a human,
-        // using Shopify's conventional contact page path. If the store
-        // doesn't have a page at this URL, this will 404 — worth creating
-        // one at Online Store > Pages if it doesn't already exist.
-        options.push({
-          label: "Contact us",
+          label: "Chat with us on WhatsApp",
           action: function () {
-            window.open('/pages/contact', '_blank');
+            var text = encodeURIComponent("Hi! I'm looking for " + state.collection.title + " products.");
+            window.open('https://wa.me/' + chatData.whatsappNumber.replace('+', '') + '?text=' + text, '_blank');
           },
         });
       }
       setOptions(options);
     }, 300);
   }
-
-  // Step 1: confirm the visitor actually wants to be contacted, before
-  // asking for personal info.
-  function askRealPersonConsent(topic) {
-    // Already captured this session — no need to ask again, just resend
-    // (or reference) the handoff instead of repeating the whole flow.
-    if (state.leadName && state.leadPhone) {
-      addMessage("You're already connected! We've sent a message to your WhatsApp — check there.", true);
-      setOptions([{ label: "Browse another category", action: showCategoryList }]);
-      return;
-    }
-
-    addMessage("Sure! Want us to reach out to you on WhatsApp?", true);
-    setOptions([
-      { label: "Yes", action: function () { askLeadName(topic); } },
-      { label: "No, never mind", action: function () { setOptions([{ label: "Browse another category", action: showCategoryList }]); } },
-    ]);
-  }
-
-  // Step 2 & 3: capture name then phone via the existing text input, one at
-  // a time, reusing the search box rather than adding more UI.
-  function askLeadName(topic) {
-    setOptions([]);
-    addMessage("Great! What's your name?", true);
-    searchInput.placeholder = "Your name";
-    state.leadStep = 'name';
-    state.leadTopic = topic;
-    searchInput.focus();
-  }
-
-  function askLeadPhone() {
-    addMessage("Thanks, " + state.leadName + "! What's your WhatsApp number? (include country code, e.g. +919876543210)", true);
-    searchInput.placeholder = "+919876543210";
-    state.leadStep = 'phone';
-  }
-
-  function submitLead(phone) {
-    setOptions([]);
-    addMessage("Connecting you now...", true);
-
-    fetch('/apps/whatsapp-offers/chatbot-lead', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: state.leadName, phoneNumber: phone, topic: state.leadTopic || '' }),
-    })
-      .then(function (res) { return res.json(); })
-      .then(function (data) {
-        if (data.success) {
-          state.leadPhone = phone;
-          if (data.alreadyRegistered) {
-            addMessage("Welcome back, " + state.leadName + "! You're already registered — we've sent you a fresh message on WhatsApp, check there.", true);
-          } else {
-            addMessage("You're all set, " + state.leadName + "! Check your WhatsApp — we've sent you a message from our team.", true);
-          }
-        } else {
-          addMessage(data.error || "Something went wrong. Please check the number and try again.", true);
-          state.leadStep = 'phone';
-          searchInput.placeholder = "+919876543210";
-        }
-      })
-      .catch(function () {
-        addMessage("Network error — please try again.", true);
-        state.leadStep = 'phone';
-      })
-      .finally(function () {
-        setOptions([{ label: "Browse another category", action: showCategoryList }]);
-      });
-  }
-
-  function searchProducts(query) {
-    var q = query.trim().toLowerCase();
-    if (!q || !chatData || !chatData.collections) return;
-
-    addMessage(query, false);
-
-    var allProducts = [];
-    chatData.collections.forEach(function (c) {
-      c.products.forEach(function (p) {
-        allProducts.push(p);
-      });
-    });
-
-    var matches = allProducts.filter(function (p) {
-      return p.title.toLowerCase().indexOf(q) !== -1;
-    }).slice(0, 5);
-
-    if (matches.length === 0) {
-      addMessage("I couldn't find anything matching \"" + query + "\". Try a different word, or pick a category below.", true);
-      setTimeout(showCategoryList, 200);
-      return;
-    }
-
-    addMessage("Here's what I found for \"" + query + "\":", true);
-    matches.forEach(addProductCard);
-
-    setTimeout(function () {
-      addMessage("Want to search again, or talk to a real person?", true);
-      var options = [{ label: "Browse by category", action: showCategoryList }];
-      if (chatData.whatsappNumber) {
-        options.push({
-          label: "Talk to a real person",
-          action: function () { askRealPersonConsent(query); },
-        });
-      } else {
-        options.push({
-          label: "Contact us",
-          action: function () { window.open('/pages/contact', '_blank'); },
-        });
-      }
-      setOptions(options);
-    }, 300);
-  }
-
-  sendBtn.addEventListener('click', function () {
-    var value = searchInput.value;
-    if (!value.trim()) return;
-    searchInput.value = '';
-
-    if (state.leadStep === 'name') {
-      addMessage(value, false);
-      state.leadName = value.trim();
-      state.leadStep = null;
-      askLeadPhone();
-      return;
-    }
-    if (state.leadStep === 'phone') {
-      addMessage(value, false);
-      state.leadStep = null;
-      searchInput.placeholder = "Or type what you're looking for...";
-      submitLead(value.trim());
-      return;
-    }
-
-    searchProducts(value);
-  });
-
-  searchInput.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') {
-      sendBtn.click();
-    }
-  });
 
   icon.addEventListener('click', function () {
     tooltip.style.display = 'none';
@@ -486,24 +251,10 @@ window.__waChatbotContext = {
   .wa-chatbot-product img { width: 50px; height: 50px; object-fit: cover; border-radius: 6px; }
   .wa-chatbot-product-title { font-size: 13px; font-weight: 600; }
   .wa-chatbot-product-price { font-size: 13px; color: #008060; }
-  .wa-chatbot-collection-link {
-    align-self: flex-start; font-size: 13px; color: #075E54; font-weight: 600;
-    text-decoration: none; padding: 4px 0;
-  }
   .wa-chatbot-options { padding: 10px; display: flex; flex-wrap: wrap; gap: 8px; background: #f5f5f5; }
   .wa-chatbot-option-btn {
     background: #fff; border: 1px solid #25D366; color: #075E54; border-radius: 16px;
     padding: 6px 14px; font-size: 13px; cursor: pointer;
-  }
-  .wa-chatbot-input-row {
-    display: flex; gap: 8px; padding: 10px; background: #f5f5f5; border-top: 1px solid #ddd;
-  }
-  .wa-chatbot-input {
-    flex: 1; padding: 8px 12px; border: 1px solid #c9cccf; border-radius: 20px; font-size: 14px; outline: none;
-  }
-  .wa-chatbot-send-btn {
-    width: 36px; height: 36px; border-radius: 50%; background: #25D366; color: #fff;
-    border: none; cursor: pointer; font-size: 16px; flex-shrink: 0;
   }
 </style>
 
