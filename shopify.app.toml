@@ -1,7 +1,7 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 name = "whatsapp-offers"
-client_id = "866284d78be7772c0243a45ebfb99c69" # filled in automatically after `shopify app config link`, or paste your Client ID here
+client_id = "7363b6ae31ea4b02f15af679ecca5ad8" # filled in automatically after `shopify app config link`, or paste your Client ID here
 application_url = "https://whtasappshopifyapp.vercel.app"
 embedded = true
 
