@@ -23,12 +23,14 @@ import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
 import { queueWhatsappJob } from "~/services/queue.server";
 import { BROADCAST_ELIGIBLE_PLANS } from "~/billing-plans";
+import { isDevelopmentStore } from "~/services/store-type.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { session, billing } = await authenticate.admin(request);
+  const { session, billing, admin } = await authenticate.admin(request);
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
 
-  const { hasActivePayment, appSubscriptions } = await billing.check({});
+  const isDevStore = await isDevelopmentStore(admin);
+  const { hasActivePayment, appSubscriptions } = await billing.check({ isTest: isDevStore });
   const onEligiblePlan = hasActivePayment && BROADCAST_ELIGIBLE_PLANS.includes(appSubscriptions[0]?.name ?? "");
 
   if (!shop) {
@@ -73,11 +75,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  const { session, billing } = await authenticate.admin(request);
+  const { session, billing, admin } = await authenticate.admin(request);
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
   if (!shop) return json({ error: "Shop not found" }, { status: 404 });
 
-  const { hasActivePayment, appSubscriptions } = await billing.check({});
+  const isDevStore = await isDevelopmentStore(admin);
+  const { hasActivePayment, appSubscriptions } = await billing.check({ isTest: isDevStore });
   const onEligiblePlan = hasActivePayment && BROADCAST_ELIGIBLE_PLANS.includes(appSubscriptions[0]?.name ?? "");
   const effectivelyPaidForSend = onEligiblePlan;
   if (!effectivelyPaidForSend) {

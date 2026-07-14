@@ -15,11 +15,13 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import { BILLING_PLANS } from "~/billing-plans";
+import { isDevelopmentStore } from "~/services/store-type.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { billing } = await authenticate.admin(request);
+  const { billing, admin } = await authenticate.admin(request);
 
-  const { hasActivePayment, appSubscriptions } = await billing.check({});
+  const isDevStore = await isDevelopmentStore(admin);
+  const { hasActivePayment, appSubscriptions } = await billing.check({ isTest: isDevStore });
 
   return json({
     hasActivePayment,
