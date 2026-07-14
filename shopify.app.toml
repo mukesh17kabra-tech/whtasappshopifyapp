@@ -1,27 +1,19 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
-name = "whatsapp-offers"
-client_id = "" # filled in automatically after `shopify app config link`, or paste your Client ID here
-application_url = "https://whtasappshopifyapp.vercel.app"
+client_id = "afd65960afd4db07ce60f92168d1c716"
+name = "Watsapp offers & Alerts"
+application_url = "https://shopify.dev/apps/default-app-home"
 embedded = true
 
 [access_scopes]
-scopes = "read_orders,read_customers,write_products,read_fulfillments,read_discounts"
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_customers,read_discounts,read_fulfillments,read_orders,write_products"
 
 [auth]
-redirect_urls = [
-  "https://whtasappshopifyapp.vercel.app/auth/callback",
-  "https://whtasappshopifyapp.vercel.app/auth/shopify/callback",
-  "https://whtasappshopifyapp.vercel.app/api/auth/callback"
-]
+redirect_urls = [ "https://shopify.dev/apps/default-app-home/api/auth" ]
 
 [webhooks]
-api_version = "2025-01"
+api_version = "2026-10"
 
-[app_proxy]
-url = "https://whtasappshopifyapp.vercel.app/api/proxy"
-subpath = "whatsapp-offers"
-prefix = "apps"
-
-[pos]
-embedded = false
+[build]
+automatically_update_urls_on_dev = true
