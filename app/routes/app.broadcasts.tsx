@@ -1,9 +1,8 @@
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData, useSubmit, useNavigation, useActionData } from "@remix-run/react";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import {
   Page,
-  Layout,
   Card,
   Text,
   BlockStack,
@@ -13,6 +12,12 @@ import {
   Button,
   Banner,
   EmptyState,
+  Tabs,
+  RadioButton,
+  Checkbox,
+  TextField,
+  Box,
+  InlineStack,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
@@ -23,31 +28,31 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const { session, billing } = await authenticate.admin(request);
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
 
-  const { hasActivePayment, appSubscriptions } = await billing.check({ isTest: true });
+  const { hasActivePayment, appSubscriptions } = await billing.check({});
   const onEligiblePlan = hasActivePayment && BROADCAST_ELIGIBLE_PLANS.includes(appSubscriptions[0]?.name ?? "");
 
   if (!shop) {
-    return json({ broadcasts: [], templates: [], subscriberCount: 0, hasActivePayment: onEligiblePlan });
+    return json({ broadcasts: [], templates: [], subscribers: [], hasActivePayment: onEligiblePlan });
   }
 
-  // Dev bypass also respects the tier — only Growth/Pro unlock broadcasts
-  const effectivelyPaid = onEligiblePlan || BROADCAST_ELIGIBLE_PLANS.includes(shop.manualPlanOverride ?? "");
+  const effectivelyPaid = onEligiblePlan;
 
-  const [broadcasts, templates, subscriberCount] = await Promise.all([
+  const [broadcasts, templates, subscribers] = await Promise.all([
     prisma.broadcast.findMany({
       where: { shopId: shop.id },
       orderBy: { createdAt: "desc" },
-      take: 20,
+      take: 30,
     }),
     prisma.template.findMany({
       where: { shopId: shop.id, category: "MARKETING" },
     }),
-    prisma.optin.count({ where: { shopId: shop.id, optedOutAt: null, marketingConsent: true } }),
+    prisma.optin.findMany({
+      where: { shopId: shop.id, optedOutAt: null, marketingConsent: true },
+      select: { id: true, name: true, phoneNumber: true },
+      orderBy: { consentAt: "desc" },
+    }),
   ]);
 
-  // Look up all templates referenced by past broadcasts (not just current
-  // marketing ones) so history shows readable names even for templates that
-  // may have since been deleted or changed category.
   const templateIds = [...new Set(broadcasts.map((b) => b.templateId))];
   const templateNames = await prisma.template.findMany({
     where: { id: { in: templateIds } },
@@ -62,24 +67,19 @@ export async function loader({ request }: LoaderFunctionArgs) {
       templateName: templateNameMap[b.templateId] ?? "(deleted template)",
     })),
     templates,
-    subscriberCount,
+    subscribers,
     hasActivePayment: effectivelyPaid,
   });
 }
 
-// IMPORTANT: QStash's free tier allows 500 requests/day. For a broadcast to
-// N subscribers this queues N jobs — fine for a few hundred subscribers/day,
-// but if your subscriber list grows past that you'll need to either upgrade
-// QStash or batch sends across multiple days. This route enqueues in chunks
-// so a single broadcast action itself doesn't run for minutes inline.
 export async function action({ request }: ActionFunctionArgs) {
   const { session, billing } = await authenticate.admin(request);
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
   if (!shop) return json({ error: "Shop not found" }, { status: 404 });
 
-  const { hasActivePayment, appSubscriptions } = await billing.check({ isTest: true });
+  const { hasActivePayment, appSubscriptions } = await billing.check({});
   const onEligiblePlan = hasActivePayment && BROADCAST_ELIGIBLE_PLANS.includes(appSubscriptions[0]?.name ?? "");
-  const effectivelyPaidForSend = onEligiblePlan || BROADCAST_ELIGIBLE_PLANS.includes(shop.manualPlanOverride ?? "");
+  const effectivelyPaidForSend = onEligiblePlan;
   if (!effectivelyPaidForSend) {
     return json(
       { error: "Marketing broadcasts require the Growth or Pro plan. Upgrade on the Billing page." },
@@ -89,18 +89,28 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const formData = await request.formData();
   const templateId = String(formData.get("templateId"));
+  const audience = String(formData.get("audience") ?? "all");
+  const selectedIds = formData.getAll("subscriberIds").map(String);
 
   if (!templateId) {
     return json({ error: "Please select a template" }, { status: 400 });
   }
 
+  const where =
+    audience === "selected"
+      ? { shopId: shop.id, optedOutAt: null, marketingConsent: true, id: { in: selectedIds } }
+      : { shopId: shop.id, optedOutAt: null, marketingConsent: true };
+
   const subscribers = await prisma.optin.findMany({
-    where: { shopId: shop.id, optedOutAt: null, marketingConsent: true },
+    where,
     select: { phoneNumber: true },
   });
 
   if (subscribers.length === 0) {
-    return json({ error: "No active subscribers to send to" }, { status: 400 });
+    return json(
+      { error: audience === "selected" ? "No subscribers selected" : "No active subscribers to send to" },
+      { status: 400 },
+    );
   }
 
   const broadcast = await prisma.broadcast.create({
@@ -112,8 +122,6 @@ export async function action({ request }: ActionFunctionArgs) {
     },
   });
 
-  // Enqueue one job per subscriber. QStash handles the actual pacing/retries;
-  // this loop just publishes messages, it doesn't wait for delivery.
   try {
     await Promise.all(
       subscribers.map((s) =>
@@ -133,46 +141,67 @@ export async function action({ request }: ActionFunctionArgs) {
       data: { status: "failed" },
     });
     const detail = err instanceof Error ? err.message : String(err);
-    return json(
-      { error: `Couldn't queue the broadcast: ${detail}` },
-      { status: 500 },
-    );
+    return json({ error: `Couldn't queue the broadcast: ${detail}` }, { status: 500 });
   }
 
   return json({ success: true, broadcastId: broadcast.id });
 }
 
 export default function Broadcasts() {
-  const { broadcasts, templates, subscriberCount, hasActivePayment } = useLoaderData<typeof loader>();
+  const { broadcasts, templates, subscribers, hasActivePayment } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
-  const [selectedTemplate, setSelectedTemplate] = useState(
-    templates[0]?.id ?? "",
-  );
+  const [selectedTab, setSelectedTab] = useState(0);
+  const [selectedTemplate, setSelectedTemplate] = useState(templates[0]?.id ?? "");
+  const [audience, setAudience] = useState<"all" | "selected">("all");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState("");
 
   const isSending = navigation.state === "submitting";
+
+  const filteredSubscribers = useMemo(() => {
+    if (!search) return subscribers;
+    const q = search.toLowerCase();
+    return subscribers.filter(
+      (s) => s.phoneNumber.toLowerCase().includes(q) || (s.name ?? "").toLowerCase().includes(q),
+    );
+  }, [subscribers, search]);
+
+  const toggleOne = useCallback((id: string, checked: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }, []);
+
+  const toggleAll = useCallback(
+    (checked: boolean) => {
+      setSelectedIds(checked ? new Set(filteredSubscribers.map((s) => s.id)) : new Set());
+    },
+    [filteredSubscribers],
+  );
 
   const handleSend = useCallback(() => {
     const formData = new FormData();
     formData.append("templateId", selectedTemplate);
+    formData.append("audience", audience);
+    if (audience === "selected") {
+      selectedIds.forEach((id) => formData.append("subscriberIds", id));
+    }
     submit(formData, { method: "post" });
-  }, [selectedTemplate, submit]);
+  }, [selectedTemplate, audience, selectedIds, submit]);
 
-  const templateOptions = templates.map((t) => ({
-    label: t.name,
-    value: t.id,
-  }));
+  const templateOptions = templates.map((t) => ({ label: t.name, value: t.id }));
 
-  const rows = broadcasts.map((b) => [
+  const recipientCount = audience === "all" ? subscribers.length : selectedIds.size;
+
+  const historyRows = broadcasts.map((b) => [
     b.id.slice(0, 8),
     b.templateName,
-    <Badge
-      key={b.id}
-      tone={
-        b.status === "done" ? "success" : b.status === "failed" ? "critical" : "info"
-      }
-    >
+    <Badge key={b.id} tone={b.status === "done" ? "success" : b.status === "failed" ? "critical" : "info"}>
       {b.status}
     </Badge>,
     `${b.sentCount} / ${b.totalRecipients}`,
@@ -181,17 +210,20 @@ export default function Broadcasts() {
 
   return (
     <Page title="Broadcast Offers">
-      <Layout>
-        <Layout.Section>
+      <BlockStack gap="400">
+        <Tabs
+          tabs={[
+            { id: "send", content: "Send Broadcast" },
+            { id: "history", content: "Broadcast History" },
+          ]}
+          selected={selectedTab}
+          onSelect={setSelectedTab}
+        />
+
+        {selectedTab === 0 ? (
           <Card>
             <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">
-                Send a new offer broadcast
-              </Text>
-              <Text as="p" tone="subdued">
-                This will send to all {subscriberCount} active subscribers,
-                using a template you composed on the Templates page.
-              </Text>
+              <Text as="h2" variant="headingMd">Send a new offer broadcast</Text>
 
               {actionData && "error" in actionData && actionData.error && (
                 <Banner tone="critical">{actionData.error}</Banner>
@@ -201,12 +233,11 @@ export default function Broadcasts() {
                 <Banner tone="warning" action={{ content: "View plans", url: "/app/billing" }}>
                   Marketing broadcasts require the Growth plan or higher.
                   Order confirmations and shipping updates still work on the
-                  Free plan.
+                  Basic plan.
                 </Banner>
               ) : templates.length === 0 ? (
                 <Banner tone="warning">
-                  No marketing templates yet. Create one on the Templates
-                  page first.
+                  No marketing templates yet. Create one on the Templates page first.
                 </Banner>
               ) : (
                 <>
@@ -216,11 +247,75 @@ export default function Broadcasts() {
                     value={selectedTemplate}
                     onChange={setSelectedTemplate}
                   />
+
+                  <BlockStack gap="200">
+                    <Text as="p" variant="bodyMd" fontWeight="medium">Send to</Text>
+                    <RadioButton
+                      label={`All active subscribers (${subscribers.length})`}
+                      checked={audience === "all"}
+                      onChange={() => setAudience("all")}
+                    />
+                    <RadioButton
+                      label="Select specific subscribers"
+                      checked={audience === "selected"}
+                      onChange={() => setAudience("selected")}
+                    />
+                  </BlockStack>
+
+                  {audience === "selected" && (
+                    <Card>
+                      <BlockStack gap="300">
+                        <TextField
+                          label="Search"
+                          labelHidden
+                          placeholder="Search name or phone number..."
+                          value={search}
+                          onChange={setSearch}
+                          autoComplete="off"
+                        />
+                        <InlineStack align="space-between">
+                          <Checkbox
+                            label={`Select all (${filteredSubscribers.length})`}
+                            checked={
+                              filteredSubscribers.length > 0 &&
+                              filteredSubscribers.every((s) => selectedIds.has(s.id))
+                            }
+                            onChange={toggleAll}
+                          />
+                          <Text as="span" variant="bodySm" tone="subdued">
+                            {selectedIds.size} selected
+                          </Text>
+                        </InlineStack>
+                        <Box maxWidth="100%" overflowX="hidden">
+                          <div style={{ maxHeight: 280, overflowY: "auto" }}>
+                            <BlockStack gap="150">
+                              {filteredSubscribers.map((s) => (
+                                <Checkbox
+                                  key={s.id}
+                                  label={`${s.name || "—"}  ·  ${s.phoneNumber}`}
+                                  checked={selectedIds.has(s.id)}
+                                  onChange={(checked) => toggleOne(s.id, checked)}
+                                />
+                              ))}
+                              {filteredSubscribers.length === 0 && (
+                                <Text as="p" tone="subdued">No matching subscribers.</Text>
+                              )}
+                            </BlockStack>
+                          </div>
+                        </Box>
+                      </BlockStack>
+                    </Card>
+                  )}
+
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    This will send to {recipientCount} recipient{recipientCount === 1 ? "" : "s"}.
+                  </Text>
+
                   <Button
                     variant="primary"
                     onClick={handleSend}
                     loading={isSending}
-                    disabled={subscriberCount === 0}
+                    disabled={recipientCount === 0}
                   >
                     Send broadcast now
                   </Button>
@@ -228,29 +323,25 @@ export default function Broadcasts() {
               )}
             </BlockStack>
           </Card>
-        </Layout.Section>
-
-        <Layout.Section>
+        ) : (
           <Card>
             <BlockStack gap="400">
-              <Text as="h2" variant="headingMd">
-                Broadcast history
-              </Text>
-              {rows.length > 0 ? (
+              <Text as="h2" variant="headingMd">Broadcast history</Text>
+              {historyRows.length > 0 ? (
                 <DataTable
                   columnContentTypes={["text", "text", "text", "text", "text"]}
                   headings={["ID", "Template", "Status", "Sent / Total", "Created"]}
-                  rows={rows}
+                  rows={historyRows}
                 />
               ) : (
                 <EmptyState heading="No broadcasts sent yet" image="">
-                  <p>Send your first offer broadcast above.</p>
+                  <p>Send your first offer broadcast from the Send Broadcast tab.</p>
                 </EmptyState>
               )}
             </BlockStack>
           </Card>
-        </Layout.Section>
-      </Layout>
+        )}
+      </BlockStack>
     </Page>
   );
 }

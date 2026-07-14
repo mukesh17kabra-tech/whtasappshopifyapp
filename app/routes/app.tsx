@@ -23,6 +23,7 @@ export default function App() {
         <Link to="/app" rel="home">
           Dashboard
         </Link>
+        <Link to="/app/getting-started">Getting Started</Link>
         <Link to="/app/whatsapp-connect">Connect WhatsApp</Link>
         <Link to="/app/broadcasts">Broadcasts</Link>
         <Link to="/app/subscribers">Subscribers</Link>

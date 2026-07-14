@@ -10,12 +10,11 @@ export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
   const plan = String(formData.get("plan"));
 
-  // isTest: true means no real money changes hands — this is required while
-  // developing/testing. Set to false (or remove entirely) before submitting
-  // your app for the Shopify App Store review / going live with real billing.
+  // No isTest flag — this now triggers real Shopify billing. Merchants
+  // will see an actual charge confirmation screen, and be genuinely billed
+  // after their trial ends.
   return billing.request({
     plan,
-    isTest: true,
     returnUrl: `${process.env.SHOPIFY_APP_URL}/app/billing`,
   });
 }

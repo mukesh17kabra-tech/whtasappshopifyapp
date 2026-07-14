@@ -1,6 +1,6 @@
-import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, Form, useSubmit } from "@remix-run/react";
-import { useState, useCallback } from "react";
+import { json, type LoaderFunctionArgs } from "@remix-run/node";
+import { useLoaderData, Form } from "@remix-run/react";
+import { useState } from "react";
 import {
   Page,
   Card,
@@ -14,40 +14,17 @@ import {
   ButtonGroup,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
-import prisma from "~/db.server";
 import { BILLING_PLANS } from "~/billing-plans";
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { session, billing } = await authenticate.admin(request);
-  const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
+  const { billing } = await authenticate.admin(request);
 
-  const { hasActivePayment, appSubscriptions } = await billing.check({ isTest: true });
+  const { hasActivePayment, appSubscriptions } = await billing.check({});
 
   return json({
     hasActivePayment,
     activePlan: appSubscriptions[0]?.name ?? null,
-    manualPlanOverride: shop?.manualPlanOverride ?? null,
   });
-}
-
-export async function action({ request }: ActionFunctionArgs) {
-  const { session } = await authenticate.admin(request);
-  const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
-  if (!shop) return json({ error: "Shop not found" }, { status: 404 });
-
-  const formData = await request.formData();
-  const intent = formData.get("intent");
-
-  if (intent === "dev-set-plan") {
-    const plan = String(formData.get("plan"));
-    await prisma.shop.update({
-      where: { id: shop.id },
-      data: { manualPlanOverride: plan },
-    });
-    return json({ success: true });
-  }
-
-  return json({ error: "Unknown action" }, { status: 400 });
 }
 
 const PLAN_FEATURES = {
@@ -86,21 +63,10 @@ const COMPARISON_ROWS = [
 ];
 
 export default function Billing() {
-  const { hasActivePayment, activePlan, manualPlanOverride } = useLoaderData<typeof loader>();
-  const submit = useSubmit();
+  const { hasActivePayment, activePlan } = useLoaderData<typeof loader>();
   const [yearly, setYearly] = useState(false);
 
-  const effectivePlan = manualPlanOverride || (hasActivePayment ? activePlan : null);
-
-  const handleDevSetPlan = useCallback(
-    (plan: string) => {
-      const formData = new FormData();
-      formData.append("intent", "dev-set-plan");
-      formData.append("plan", plan);
-      submit(formData, { method: "post" });
-    },
-    [submit],
-  );
+  const effectivePlan = hasActivePayment ? activePlan : null;
 
   const prices = {
     Basic: yearly ? "$3.99" : "$4.99",
@@ -115,7 +81,7 @@ export default function Billing() {
   };
 
   function renderCard(name: "Basic" | "Growth" | "Pro", popular?: boolean) {
-    const isCurrent = effectivePlan === planKeys[name] || effectivePlan === name;
+    const isCurrent = effectivePlan === planKeys[name];
 
     return (
       <Box width="33%" key={name}>
@@ -156,18 +122,17 @@ export default function Billing() {
   return (
     <Page title="Pricing plans" subtitle="Every plan includes a 7-day free trial. Choose the plan that fits your store.">
       <BlockStack gap="400">
-        <Banner tone="info">
-          <strong>Test mode active</strong> — billing.isTest is set to true,
-          so no real charges happen anywhere in this flow, on any store.
-          Flip isTest to false in app.billing.tsx, app.billing.subscribe.tsx,
-          and app.broadcasts.tsx before charging real merchants.
-        </Banner>
-
         {!effectivePlan && (
           <Banner tone="warning">
             You don't have an active plan yet — choose one below to start
             your 7-day free trial. All core features require an active
             subscription; there's no free tier.
+          </Banner>
+        )}
+
+        {effectivePlan && (
+          <Banner tone="success">
+            You're on the <strong>{effectivePlan}</strong> plan.
           </Banner>
         )}
 
@@ -207,22 +172,6 @@ export default function Billing() {
                 ))}
               </tbody>
             </table>
-          </BlockStack>
-        </Card>
-
-        <Card>
-          <BlockStack gap="300">
-            <Text as="h3" variant="headingSm">Developer testing — bypass Shopify billing</Text>
-            <Text as="p" variant="bodySm" tone="subdued">
-              If the Billing API is blocked (403) on your dev store, use
-              these buttons to simulate a plan locally for testing. This
-              only sets a flag on this shop's row — no real charge.
-            </Text>
-            <ButtonGroup>
-              <Button pressed={effectivePlan === "Basic"} onClick={() => handleDevSetPlan("Basic")}>Basic</Button>
-              <Button pressed={effectivePlan === "Growth"} onClick={() => handleDevSetPlan("Growth")}>Growth</Button>
-              <Button pressed={effectivePlan === "Pro"} onClick={() => handleDevSetPlan("Pro")}>Pro</Button>
-            </ButtonGroup>
           </BlockStack>
         </Card>
 
