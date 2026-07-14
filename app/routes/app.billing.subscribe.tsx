@@ -27,6 +27,12 @@ export async function action({ request }: ActionFunctionArgs) {
       throw err;
     }
     console.error(`billing.request failed for plan "${plan}" (isDevStore: ${isDevStore}):`, err);
+    // The generic "Error while creating a subscription" wrapper hides the
+    // real reason inside errorData — log it explicitly so it's actually
+    // visible in Vercel's logs instead of just the wrapper message.
+    if (err && typeof err === "object" && "errorData" in err) {
+      console.error("billing.request errorData detail:", JSON.stringify((err as any).errorData));
+    }
     const detail = err instanceof Error ? err.message : String(err);
     return json(
       { error: `Couldn't start checkout for this plan: ${detail}` },

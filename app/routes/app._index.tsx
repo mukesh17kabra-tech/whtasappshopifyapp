@@ -18,7 +18,38 @@ import shopify, { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
 
 export async function action({ request }: ActionFunctionArgs) {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
+  const formData = await request.formData();
+  const intent = formData.get("intent");
+
+  if (intent === "cancel-subscriptions") {
+    try {
+      // List every subscription (active, pending, or otherwise) on this
+      // shop's installation — a leftover PENDING one from an earlier failed
+      // attempt commonly blocks creating a new subscription entirely.
+      const listResponse = await admin.graphql(`
+        query { currentAppInstallation { activeSubscriptions { id name status } } }
+      `);
+      const listData = await listResponse.json();
+      const subs = listData?.data?.currentAppInstallation?.activeSubscriptions ?? [];
+
+      const cancelled = [];
+      for (const sub of subs) {
+        const cancelResponse = await admin.graphql(
+          `mutation CancelSub($id: ID!) { appSubscriptionCancel(id: $id) { userErrors { message } appSubscription { id status } } }`,
+          { variables: { id: sub.id } },
+        );
+        const cancelData = await cancelResponse.json();
+        cancelled.push({ name: sub.name, status: sub.status, result: cancelData?.data?.appSubscriptionCancel });
+      }
+
+      console.log(`Cancelled subscriptions for ${session.shop}:`, JSON.stringify(cancelled));
+      return json({ subsSuccess: true, found: subs.length, cancelled });
+    } catch (err) {
+      console.error(`Cancel subscriptions FAILED for ${session.shop}:`, err);
+      return json({ subsError: err instanceof Error ? err.message : String(err) }, { status: 500 });
+    }
+  }
 
   try {
     const results = await shopify.registerWebhooks({ session });
@@ -86,6 +117,10 @@ export default function Dashboard() {
     submit({}, { method: "post" });
   };
 
+  const handleCancelSubscriptions = () => {
+    submit({ intent: "cancel-subscriptions" }, { method: "post" });
+  };
+
   const rows = recentMessages.map((m) => [
     m.phoneNumber,
     m.templateUsed,
@@ -123,6 +158,39 @@ export default function Dashboard() {
               )}
               {actionData && "error" in actionData && (
                 <Banner tone="critical">Failed: {actionData.error}</Banner>
+              )}
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="200">
+              <InlineStack align="space-between" blockAlign="center">
+                <Text as="h3" variant="headingSm">
+                  Troubleshooting: stuck billing subscription
+                </Text>
+                <Button onClick={handleCancelSubscriptions} loading={navigation.state === "submitting"}>
+                  Cancel any pending subscriptions
+                </Button>
+              </InlineStack>
+              <Text as="p" variant="bodySm" tone="subdued">
+                If clicking a plan on the Billing page fails with "Error
+                while creating a subscription", it's usually because an
+                earlier attempt left a subscription stuck in a pending
+                state, which blocks creating a new one. Click this to find
+                and cancel any such subscriptions, then try subscribing
+                again.
+              </Text>
+              {actionData && "subsSuccess" in actionData && (
+                <Banner tone="success">
+                  Found {actionData.found} subscription(s), attempted to
+                  cancel all of them. Check Vercel logs for details, then
+                  try the Billing page again.
+                </Banner>
+              )}
+              {actionData && "subsError" in actionData && (
+                <Banner tone="critical">Failed: {actionData.subsError}</Banner>
               )}
             </BlockStack>
           </Card>
