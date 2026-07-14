@@ -1,5 +1,5 @@
 import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, Form } from "@remix-run/react";
+import { useLoaderData, Form, useRouteError } from "@remix-run/react";
 import { useState } from "react";
 import {
   Page,
@@ -13,6 +13,7 @@ import {
   Box,
   ButtonGroup,
 } from "@shopify/polaris";
+import { boundary } from "@shopify/shopify-app-remix/server";
 import { authenticate } from "~/shopify.server";
 import { BILLING_PLANS } from "~/billing-plans";
 import { isDevelopmentStore } from "~/services/store-type.server";
@@ -21,12 +22,39 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const { billing, admin } = await authenticate.admin(request);
 
   const isDevStore = await isDevelopmentStore(admin);
-  const { hasActivePayment, appSubscriptions } = await billing.check({ isTest: isDevStore });
 
-  return json({
-    hasActivePayment,
-    activePlan: appSubscriptions[0]?.name ?? null,
-  });
+  try {
+    const { hasActivePayment, appSubscriptions } = await billing.check({ isTest: isDevStore });
+    return json({
+      hasActivePayment,
+      activePlan: appSubscriptions[0]?.name ?? null,
+      billingCheckFailed: false,
+    });
+  } catch (err) {
+    // If this is a redirect/auth Response from Shopify's own auth handling
+    // (e.g. session bounce), let it propagate so the library can do its job.
+    if (err instanceof Response && err.status >= 300 && err.status < 400) {
+      throw err;
+    }
+    // A genuine 401/403 here means the admin session/token used for this
+    // request was rejected — most commonly caused by a stale/expired
+    // session, a mismatched SHOPIFY_API_KEY/SHOPIFY_API_SECRET between
+    // Partners and your Vercel env vars, or scopes that changed without
+    // a re-auth. Log it clearly, but never crash the whole page over it.
+    console.error("billing.check failed — returning safe fallback so the page still renders:", err);
+    return json({
+      hasActivePayment: false,
+      activePlan: null,
+      billingCheckFailed: true,
+    });
+  }
+}
+
+// Backstop: if authenticate.admin() itself throws (expired/invalid session),
+// Shopify's boundary helper knows how to redirect the merchant back through
+// re-auth instead of showing a bare "Application Error" in the iframe.
+export function ErrorBoundary() {
+  return boundary.error(useRouteError());
 }
 
 const PLAN_FEATURES = {
@@ -65,7 +93,7 @@ const COMPARISON_ROWS = [
 ];
 
 export default function Billing() {
-  const { hasActivePayment, activePlan } = useLoaderData<typeof loader>();
+  const { hasActivePayment, activePlan, billingCheckFailed } = useLoaderData<typeof loader>();
   const [yearly, setYearly] = useState(false);
 
   const effectivePlan = hasActivePayment ? activePlan : null;
@@ -124,6 +152,15 @@ export default function Billing() {
   return (
     <Page title="Pricing plans" subtitle="Every plan includes a 7-day free trial. Choose the plan that fits your store.">
       <BlockStack gap="400">
+        {billingCheckFailed && (
+          <Banner tone="critical" title="Couldn't verify your billing status">
+            We couldn't confirm your current plan just now, so we're showing
+            plans as if you have none yet — reload the page to try again.
+            If this keeps happening, the app may need to be reinstalled or
+            reconnected.
+          </Banner>
+        )}
+
         {!effectivePlan && (
           <Banner tone="warning">
             You don't have an active plan yet — choose one below to start
