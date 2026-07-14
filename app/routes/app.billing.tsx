@@ -17,6 +17,7 @@ import { boundary } from "@shopify/shopify-app-remix/server";
 import { authenticate } from "~/shopify.server";
 import { BILLING_PLANS } from "~/billing-plans";
 import { isDevelopmentStore } from "~/services/store-type.server";
+import { formatCaughtError } from "~/services/error-format.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { billing, admin } = await authenticate.admin(request);
@@ -41,7 +42,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     // session, a mismatched SHOPIFY_API_KEY/SHOPIFY_API_SECRET between
     // Partners and your Vercel env vars, or scopes that changed without
     // a re-auth. Log it clearly, but never crash the whole page over it.
-    console.error("billing.check failed — returning safe fallback so the page still renders:", err);
+    const detail = await formatCaughtError(err);
+    console.error("billing.check failed — returning safe fallback so the page still renders:", detail);
     return json({
       hasActivePayment: false,
       activePlan: null,

@@ -1,3 +1,5 @@
+import { formatCaughtError } from "./error-format.server";
+
 // Determines whether the current shop is a Partner-created development
 // store — these have no real payment method and Shopify requires
 // isTest: true for any billing operation on them. Real merchant stores need
@@ -11,7 +13,8 @@ export async function isDevelopmentStore(admin: any): Promise<boolean> {
     const data = await response.json();
     return Boolean(data?.data?.shop?.plan?.partnerDevelopment);
   } catch (err) {
-    console.error("Couldn't determine store type, defaulting to isTest: false", err);
+    const detail = await formatCaughtError(err);
+    console.error("Couldn't determine store type, defaulting to isTest: false —", detail);
     return false;
   }
 }

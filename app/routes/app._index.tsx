@@ -16,6 +16,7 @@ import {
 } from "@shopify/polaris";
 import shopify, { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
+import { formatCaughtError } from "~/services/error-format.server";
 
 export async function action({ request }: ActionFunctionArgs) {
   const { session, admin } = await authenticate.admin(request);
@@ -46,8 +47,9 @@ export async function action({ request }: ActionFunctionArgs) {
       console.log(`Cancelled subscriptions for ${session.shop}:`, JSON.stringify(cancelled));
       return json({ subsSuccess: true, found: subs.length, cancelled });
     } catch (err) {
-      console.error(`Cancel subscriptions FAILED for ${session.shop}:`, err);
-      return json({ subsError: err instanceof Error ? err.message : String(err) }, { status: 500 });
+      const detail = await formatCaughtError(err);
+      console.error(`Cancel subscriptions FAILED for ${session.shop}:`, detail);
+      return json({ subsError: detail }, { status: 500 });
     }
   }
 
@@ -56,8 +58,9 @@ export async function action({ request }: ActionFunctionArgs) {
     console.log(`Manual re-register webhooks for ${session.shop}:`, JSON.stringify(results));
     return json({ success: true, results });
   } catch (err) {
-    console.error(`Manual re-register webhooks FAILED for ${session.shop}:`, err);
-    return json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+    const detail = await formatCaughtError(err);
+    console.error(`Manual re-register webhooks FAILED for ${session.shop}:`, detail);
+    return json({ error: detail }, { status: 500 });
   }
 }
 
