@@ -57,9 +57,6 @@ const shopify = shopifyApp({
       trialDays: 7,
     },
   },
-  future: {
-    unstable_newEmbeddedAuthStrategy: true,
-  },
   webhooks: {
     APP_UNINSTALLED: {
       deliveryMethod: DeliveryMethod.Http,
