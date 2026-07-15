@@ -19,6 +19,9 @@ const shopify = shopifyApp({
   authPathPrefix: "/auth",
   sessionStorage: new PrismaSessionStorage(prisma),
   distribution: AppDistribution.AppStore,
+  future: {
+    unstable_newEmbeddedAuthStrategy: true,
+  },
   billing: {
     [BILLING_PLANS.BASIC]: {
       amount: 4.99,
