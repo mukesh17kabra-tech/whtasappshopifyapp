@@ -22,11 +22,12 @@ function createPrismaClient() {
 }
 
 // Reuse the client across hot-reloads in dev, and across warm serverless
-// invocations in production, instead of opening a fresh connection every time.
+// invocations in production, instead of opening a fresh Neon pool/websocket
+// connection on every single request. Caching only in dev (checking
+// NODE_ENV) was the bug here — Vercel reuses warm lambda containers across
+// requests in production too, so this needs to be cached unconditionally to
+// actually get that benefit.
 const prisma: PrismaClient = global.prismaGlobal ?? createPrismaClient();
-
-if (process.env.NODE_ENV !== "production") {
-  global.prismaGlobal = prisma;
-}
+global.prismaGlobal = prisma;
 
 export default prisma;
