@@ -24,17 +24,28 @@ import prisma from "~/db.server";
 import { queueWhatsappJob } from "~/services/queue.server";
 import { BROADCAST_ELIGIBLE_PLANS } from "~/billing-plans";
 import { isDevelopmentStore } from "~/services/store-type.server";
+import { formatCaughtError } from "~/services/error-format.server";
+import { boundary } from "@shopify/shopify-app-remix/server";
+import { useRouteError } from "@remix-run/react";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session, billing, admin } = await authenticate.admin(request);
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
 
-  const isDevStore = await isDevelopmentStore(admin);
-  const { hasActivePayment, appSubscriptions } = await billing.check({ isTest: isDevStore });
-  const onEligiblePlan = hasActivePayment && BROADCAST_ELIGIBLE_PLANS.includes(appSubscriptions[0]?.name ?? "");
+  let onEligiblePlan = false;
+  let billingCheckFailed = false;
+  try {
+    const isDevStore = await isDevelopmentStore(admin);
+    const { hasActivePayment, appSubscriptions } = await billing.check({ isTest: isDevStore });
+    onEligiblePlan = hasActivePayment && BROADCAST_ELIGIBLE_PLANS.includes(appSubscriptions[0]?.name ?? "");
+  } catch (err) {
+    const detail = await formatCaughtError(err);
+    console.error("Broadcasts: billing.check failed — showing page with no active plan assumed:", detail);
+    billingCheckFailed = true;
+  }
 
   if (!shop) {
-    return json({ broadcasts: [], templates: [], subscribers: [], hasActivePayment: onEligiblePlan });
+    return json({ broadcasts: [], templates: [], subscribers: [], hasActivePayment: onEligiblePlan, billingCheckFailed });
   }
 
   const effectivelyPaid = onEligiblePlan;
@@ -79,9 +90,19 @@ export async function action({ request }: ActionFunctionArgs) {
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
   if (!shop) return json({ error: "Shop not found" }, { status: 404 });
 
-  const isDevStore = await isDevelopmentStore(admin);
-  const { hasActivePayment, appSubscriptions } = await billing.check({ isTest: isDevStore });
-  const onEligiblePlan = hasActivePayment && BROADCAST_ELIGIBLE_PLANS.includes(appSubscriptions[0]?.name ?? "");
+  let onEligiblePlan = false;
+  try {
+    const isDevStore = await isDevelopmentStore(admin);
+    const { hasActivePayment, appSubscriptions } = await billing.check({ isTest: isDevStore });
+    onEligiblePlan = hasActivePayment && BROADCAST_ELIGIBLE_PLANS.includes(appSubscriptions[0]?.name ?? "");
+  } catch (err) {
+    const detail = await formatCaughtError(err);
+    console.error("Broadcasts action: billing.check failed:", detail);
+    return json(
+      { error: `Couldn't verify your billing status (${detail}). Please reload and try again.` },
+      { status: 502 },
+    );
+  }
   const effectivelyPaidForSend = onEligiblePlan;
   if (!effectivelyPaidForSend) {
     return json(
@@ -151,7 +172,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Broadcasts() {
-  const { broadcasts, templates, subscribers, hasActivePayment } = useLoaderData<typeof loader>();
+  const { broadcasts, templates, subscribers, hasActivePayment, billingCheckFailed } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -214,6 +235,13 @@ export default function Broadcasts() {
   return (
     <Page title="Broadcast Offers">
       <BlockStack gap="400">
+        {billingCheckFailed && (
+          <Banner tone="critical" title="Couldn't verify your billing status">
+            Reload the page to try again. If this keeps happening, the app
+            may need to be reinstalled or reconnected.
+          </Banner>
+        )}
+
         <Tabs
           tabs={[
             { id: "send", content: "Send Broadcast" },
@@ -347,4 +375,8 @@ export default function Broadcasts() {
       </BlockStack>
     </Page>
   );
+}
+
+export function ErrorBoundary() {
+  return boundary.error(useRouteError());
 }
