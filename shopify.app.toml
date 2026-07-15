@@ -21,7 +21,7 @@ redirect_urls = [
 api_version = "2025-01"
 
 [app_proxy]
-url = "https://whtasappshopifyapp.vercel.app/api/optin"
+url = "https://whtasappshopifyapp.vercel.app/api/proxy"
 subpath = "whatsapp-offers"
 prefix = "apps"
 
