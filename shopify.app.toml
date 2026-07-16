@@ -2,7 +2,7 @@
 
 client_id = "afd65960afd4db07ce60f92168d1c716"
 name = "Watsapp offers & Alerts"
-application_url = "https://whtasappshopifyapp.vercel.app"
+application_url = "https://watsappsofferapp.vercel.app"
 embedded = true
 
 [access_scopes]
@@ -10,16 +10,16 @@ scopes = "read_orders,read_customers,write_products,read_fulfillments,read_disco
 
 [auth]
 redirect_urls = [
-  "https://whtasappshopifyapp.vercel.app/auth/callback",
-  "https://whtasappshopifyapp.vercel.app/auth/shopify/callback",
-  "https://whtasappshopifyapp.vercel.app/api/auth/callback"
+  "https://watsappsofferapp.vercel.app/auth/callback",
+  "https://watsappsofferapp.vercel.app/auth/shopify/callback",
+  "https://watsappsofferapp.vercel.app/api/auth/callback"
 ]
 
 [webhooks]
 api_version = "2025-01"
 
 [app_proxy]
-url = "https://whtasappshopifyapp.vercel.app/api/proxy"
+url = "https://watsappsofferapp.vercel.app/api/proxy"
 subpath = "whatsapp-offers"
 prefix = "apps"
 
