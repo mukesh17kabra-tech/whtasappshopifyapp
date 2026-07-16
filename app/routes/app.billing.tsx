@@ -16,32 +16,24 @@ import {
 import { boundary } from "@shopify/shopify-app-remix/server";
 import { authenticate } from "~/shopify.server";
 import { BILLING_PLANS } from "~/billing-plans";
-import { isDevelopmentStore } from "~/services/store-type.server";
 import { formatCaughtError } from "~/services/error-format.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { billing, admin } = await authenticate.admin(request);
-
-  const isDevStore = await isDevelopmentStore(admin);
+  const { billing } = await authenticate.admin(request);
 
   try {
-    const { hasActivePayment, appSubscriptions } = await billing.check({ isTest: isDevStore });
+    // Hardcoded true while testing on a development store — see note in
+    // app.billing.subscribe.tsx about switching this back before review.
+    const { hasActivePayment, appSubscriptions } = await billing.check({ isTest: true });
     return json({
       hasActivePayment,
       activePlan: appSubscriptions[0]?.name ?? null,
       billingCheckFailed: false,
     });
   } catch (err) {
-    // If this is a redirect/auth Response from Shopify's own auth handling
-    // (e.g. session bounce), let it propagate so the library can do its job.
     if (err instanceof Response && err.status >= 300 && err.status < 400) {
       throw err;
     }
-    // A genuine 401/403 here means the admin session/token used for this
-    // request was rejected — most commonly caused by a stale/expired
-    // session, a mismatched SHOPIFY_API_KEY/SHOPIFY_API_SECRET between
-    // Partners and your Vercel env vars, or scopes that changed without
-    // a re-auth. Log it clearly, but never crash the whole page over it.
     const detail = await formatCaughtError(err);
     console.error("billing.check failed — returning safe fallback so the page still renders:", detail);
     return json({
