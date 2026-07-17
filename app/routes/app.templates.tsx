@@ -87,6 +87,36 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ success: true });
   }
 
+  if (intent === "seed-starters") {
+    const existing = await prisma.template.count({ where: { shopId: shop.id, category: "MARKETING" } });
+    if (existing > 0) {
+      return json({ error: "You already have marketing templates — starter templates are only added once." }, { status: 400 });
+    }
+
+    const starters = [
+      { name: "Welcome Offer (WhatsApp)", channel: "whatsapp", body: "Hi {first_name}! Thanks for joining us. Here's 10% off your first order — use code WELCOME10 at checkout." },
+      { name: "We Miss You (WhatsApp)", channel: "whatsapp", body: "Hey {first_name}, it's been a while! Come back and check out what's new — we've got some great picks waiting for you." },
+      { name: "Flash Sale (WhatsApp)", channel: "whatsapp", body: "{first_name}, our flash sale is live for the next 24 hours only! Don't miss out." },
+      { name: "Welcome Offer (Email)", channel: "email", subject: "Welcome! Here's 10% off your first order", body: "Hi {first_name},\n\nThanks for joining us! As a welcome gift, enjoy 10% off your first order with code WELCOME10.\n\nHappy shopping!" },
+      { name: "We Miss You (Email)", channel: "email", subject: "We miss you!", body: "Hi {first_name},\n\nIt's been a while since we've seen you! We've added some great new products we think you'll love.\n\nCome take a look." },
+      { name: "Flash Sale (Email)", channel: "email", subject: "24-hour flash sale — don't miss it!", body: "Hi {first_name},\n\nOur flash sale just went live and it's only running for 24 hours. Shop now before it's gone!" },
+    ];
+
+    await prisma.template.createMany({
+      data: starters.map((s: any) => ({
+        shopId: shop.id,
+        name: s.name,
+        category: "MARKETING",
+        channel: s.channel,
+        subject: s.subject ?? null,
+        body: s.body,
+        status: "active",
+      })),
+    });
+
+    return json({ success: true, seeded: starters.length });
+  }
+
   const name = String(formData.get("name") ?? "").trim();
   const body = String(formData.get("body") ?? "").trim();
   const category = String(formData.get("category") ?? "MARKETING");
@@ -304,6 +334,25 @@ function MarketingTab({ templates, isSaving, onDelete, submit }: any) {
         single order tied to it. For order-specific details, use the Order
         Notifications tab instead.
       </Banner>
+
+      {templates.length === 0 && (
+        <Card>
+          <InlineStack align="space-between" blockAlign="center">
+            <Text as="p" variant="bodyMd">
+              New here? Add 6 ready-made templates (3 WhatsApp + 3 Email) to get started quickly.
+            </Text>
+            <Button
+              onClick={() => {
+                const formData = new FormData();
+                formData.append("intent", "seed-starters");
+                submit(formData, { method: "post" });
+              }}
+            >
+              Add starter templates
+            </Button>
+          </InlineStack>
+        </Card>
+      )}
 
       <InlineStack gap="400" align="start" wrap={false}>
         <Box width="55%">

@@ -1,6 +1,6 @@
-import { json, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, Form, useRouteError } from "@remix-run/react";
-import { useState } from "react";
+import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
+import { useLoaderData, Form, useRouteError, useSubmit } from "@remix-run/react";
+import { useState, useCallback } from "react";
 import {
   Page,
   Card,
@@ -18,9 +18,31 @@ import { authenticate } from "~/shopify.server";
 import { BILLING_PLANS } from "~/billing-plans";
 import { formatCaughtError } from "~/services/error-format.server";
 import { isDevelopmentStore } from "~/services/store-type.server";
+import prisma from "~/db.server";
+
+export async function action({ request }: ActionFunctionArgs) {
+  const { session } = await authenticate.admin(request);
+  const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
+  if (!shop) return json({ error: "Shop not found" }, { status: 404 });
+
+  const formData = await request.formData();
+  const intent = formData.get("intent");
+
+  if (intent === "dev-set-plan") {
+    const plan = String(formData.get("plan"));
+    await prisma.shop.update({
+      where: { id: shop.id },
+      data: { manualPlanOverride: plan },
+    });
+    return json({ success: true });
+  }
+
+  return json({ error: "Unknown action" }, { status: 400 });
+}
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  const { billing, admin } = await authenticate.admin(request);
+  const { session, billing, admin } = await authenticate.admin(request);
+  const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
 
   try {
     const isDevStore = await isDevelopmentStore(admin);
@@ -29,6 +51,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       hasActivePayment,
       activePlan: appSubscriptions[0]?.name ?? null,
       billingCheckFailed: false,
+      manualPlanOverride: shop?.manualPlanOverride ?? null,
     });
   } catch (err) {
     if (err instanceof Response && err.status >= 300 && err.status < 400) {
@@ -40,6 +63,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
       hasActivePayment: false,
       activePlan: null,
       billingCheckFailed: true,
+      manualPlanOverride: shop?.manualPlanOverride ?? null,
     });
   }
 }
@@ -87,10 +111,21 @@ const COMPARISON_ROWS = [
 ];
 
 export default function Billing() {
-  const { hasActivePayment, activePlan, billingCheckFailed } = useLoaderData<typeof loader>();
+  const { hasActivePayment, activePlan, billingCheckFailed, manualPlanOverride } = useLoaderData<typeof loader>();
   const [yearly, setYearly] = useState(false);
+  const submit = useSubmit();
 
-  const effectivePlan = hasActivePayment ? activePlan : null;
+  const effectivePlan = manualPlanOverride || (hasActivePayment ? activePlan : null);
+
+  const handleDevSetPlan = useCallback(
+    (plan: string) => {
+      const formData = new FormData();
+      formData.append("intent", "dev-set-plan");
+      formData.append("plan", plan);
+      submit(formData, { method: "post" });
+    },
+    [submit],
+  );
 
   const prices = {
     Basic: yearly ? "$3.99" : "$4.99",
@@ -105,7 +140,7 @@ export default function Billing() {
   };
 
   function renderCard(name: "Basic" | "Growth" | "Pro", popular?: boolean) {
-    const isCurrent = effectivePlan === planKeys[name];
+    const isCurrent = effectivePlan === planKeys[name] || effectivePlan === name;
 
     return (
       <Box width="33%" key={name}>
@@ -211,6 +246,21 @@ export default function Billing() {
         <Text as="p" variant="bodySm" tone="subdued" alignment="center">
           Every plan includes a 7-day free trial. Cancel anytime. Payments processed securely by Shopify.
         </Text>
+
+        <Card>
+          <BlockStack gap="300">
+            <Text as="h3" variant="headingSm">Developer testing — bypass Shopify billing</Text>
+            <Text as="p" variant="bodySm" tone="subdued">
+              Use while Shopify's Billing API is unavailable for this
+              account. Only sets a flag on this shop's row — no real charge.
+            </Text>
+            <ButtonGroup>
+              <Button pressed={effectivePlan === "Basic"} onClick={() => handleDevSetPlan("Basic")}>Basic</Button>
+              <Button pressed={effectivePlan === "Growth"} onClick={() => handleDevSetPlan("Growth")}>Growth</Button>
+              <Button pressed={effectivePlan === "Pro"} onClick={() => handleDevSetPlan("Pro")}>Pro</Button>
+            </ButtonGroup>
+          </BlockStack>
+        </Card>
       </BlockStack>
     </Page>
   );

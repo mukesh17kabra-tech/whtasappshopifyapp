@@ -51,6 +51,7 @@ model Shop {
   // Never used as a source of truth once real billing is live; see
   // app.billing.tsx for how this is only consulted as a fallback.
   manualPlanOverride String?
+  supportEmail       String? // merchant's own email — used as Reply-To on outgoing emails, since we send from our own verified domain
 
   optins        Optin[]
   ordersTrack   OrderTracking[]
@@ -60,6 +61,7 @@ model Shop {
   popupSettings PopupSettings?
   supportMessages SupportMessage[]
   chatbotSettings ChatbotSettings?
+  flows           Flow[]
 }
 
 model Optin {
@@ -67,6 +69,7 @@ model Optin {
   shop             Shop      @relation(fields: [shopId], references: [id])
   shopId           String
   phoneNumber      String    // E.164 format, e.g. +919876543210
+  email            String?   // captured from checkout, popup (if collected), or manual entry
   name             String?   // captured from the popup or checkout
   consentAt        DateTime  @default(now())
   source           String    // "popup" | "checkout" | "manual" | "csv_import" | "order"
@@ -122,7 +125,9 @@ model Template {
   shopId             String
   name               String
   whatsappTemplateId String?  // Meta's template ID, filled in after successful submission
-  category           String   // "MARKETING" | "UTILITY"
+  category           String   // "MARKETING" | order category | "FLOW"
+  channel            String   @default("whatsapp") // "whatsapp" | "email" | "both"
+  subject            String?  // email subject line — only used when channel includes email
   status             String   @default("draft") // draft | pending | approved | rejected
   body               String   @default("") // message text with {variable} placeholders, composed in-app
   imageUrl           String?  // optional header image for the message
@@ -185,4 +190,53 @@ model ChatbotSettings {
   headerLogoUrl String?  // shown next to header text inside the chat window
   position      String   @default("bottom-right") // "bottom-right" | "bottom-left"
   updatedAt     DateTime @updatedAt
+}
+
+// ---------- Flow automation (Klaviyo-style) ----------
+
+model Flow {
+  id        String     @id @default(cuid())
+  shop      Shop       @relation(fields: [shopId], references: [id])
+  shopId    String
+  name      String
+  trigger   String     // "ORDER_PLACED" — more triggers can be added later
+  enabled   Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  steps     FlowStep[]
+  runs      FlowRun[]
+
+  @@index([shopId])
+}
+
+model FlowStep {
+  id         String  @id @default(cuid())
+  flow       Flow    @relation(fields: [flowId], references: [id])
+  flowId     String
+  position   Int     // order within the flow, 0-indexed
+  type       String  // "DELAY" | "SEND_MESSAGE"
+  delayDays  Int?    // used when type = "DELAY"
+  templateId String? // used when type = "SEND_MESSAGE", references Template.id
+
+  @@index([flowId])
+}
+
+// One FlowRun = one customer's journey through one Flow, starting from one
+// trigger event (e.g. their specific order). Advances step by step, with
+// QStash scheduling the next check after any DELAY step.
+model FlowRun {
+  id           String    @id @default(cuid())
+  flow         Flow      @relation(fields: [flowId], references: [id])
+  flowId       String
+  shopId       String
+  phoneNumber  String?
+  email        String?
+  customerName String?
+  orderId      String?   // the order that triggered this run, if applicable
+  currentStep  Int       @default(0)
+  status       String    @default("active") // active | completed | cancelled
+  nextRunAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([flowId])
+  @@index([status, nextRunAt])
 }

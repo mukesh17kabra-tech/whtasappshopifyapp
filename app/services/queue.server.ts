@@ -9,6 +9,7 @@ const qstash = new Client({
 });
 
 const JOB_ENDPOINT = `${process.env.SHOPIFY_APP_URL}/api/jobs/send-whatsapp`;
+const FLOW_JOB_ENDPOINT = `${process.env.SHOPIFY_APP_URL}/api/jobs/process-flow-step`;
 
 export type WhatsappJob =
   | {
@@ -46,5 +47,30 @@ export async function queueWhatsappJob(job: WhatsappJob) {
     // generic failure — this is what shows up in Vercel's function logs.
     const detail = err instanceof Error ? err.message : String(err);
     throw new Error(`QStash publish failed: ${detail}`);
+  }
+}
+
+// Schedules (or immediately triggers, if runAt is omitted) processing of
+// the next step in a FlowRun. QStash's `notBefore` holds the job until the
+// given unix timestamp (seconds) — this is what makes "wait 3 days, then
+// send" work without a long-running worker process.
+export async function queueFlowStepJob(flowRunId: string, runAt?: Date) {
+  if (!process.env.QSTASH_TOKEN) {
+    throw new Error("QSTASH_TOKEN is not set");
+  }
+  if (!process.env.SHOPIFY_APP_URL || !process.env.SHOPIFY_APP_URL.startsWith("http")) {
+    throw new Error(`SHOPIFY_APP_URL is not set or invalid: "${process.env.SHOPIFY_APP_URL}"`);
+  }
+
+  try {
+    await qstash.publishJSON({
+      url: FLOW_JOB_ENDPOINT,
+      body: { flowRunId },
+      retries: 3,
+      ...(runAt ? { notBefore: Math.floor(runAt.getTime() / 1000) } : {}),
+    });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`QStash publish failed (flow step): ${detail}`);
   }
 }

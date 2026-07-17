@@ -48,7 +48,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return json({ broadcasts: [], templates: [], subscribers: [], hasActivePayment: onEligiblePlan, billingCheckFailed });
   }
 
-  const effectivelyPaid = onEligiblePlan;
+  const effectivelyPaid = onEligiblePlan || BROADCAST_ELIGIBLE_PLANS.includes(shop.manualPlanOverride ?? "");
 
   const [broadcasts, templates, subscribers] = await Promise.all([
     prisma.broadcast.findMany({
@@ -97,13 +97,10 @@ export async function action({ request }: ActionFunctionArgs) {
     onEligiblePlan = hasActivePayment && BROADCAST_ELIGIBLE_PLANS.includes(appSubscriptions[0]?.name ?? "");
   } catch (err) {
     const detail = await formatCaughtError(err);
-    console.error("Broadcasts action: billing.check failed:", detail);
-    return json(
-      { error: `Couldn't verify your billing status (${detail}). Please reload and try again.` },
-      { status: 502 },
-    );
+    console.error("Broadcasts action: billing.check failed, falling back to manual override if set:", detail);
+    // Don't give up here — fall through to check manualPlanOverride below.
   }
-  const effectivelyPaidForSend = onEligiblePlan;
+  const effectivelyPaidForSend = onEligiblePlan || BROADCAST_ELIGIBLE_PLANS.includes(shop.manualPlanOverride ?? "");
   if (!effectivelyPaidForSend) {
     return json(
       { error: "Marketing broadcasts require the Growth or Pro plan. Upgrade on the Billing page." },

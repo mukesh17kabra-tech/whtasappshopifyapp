@@ -2,10 +2,8 @@ import type { ActionFunctionArgs } from "@remix-run/node";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
 import { queueWhatsappJob } from "~/services/queue.server";
+import { startFlowRun } from "~/services/flow-engine.server";
 
-// Shopify expects a response within ~5s. We write the event to Postgres
-// and enqueue a background job, then return 200 immediately. The actual
-// WhatsApp API call happens in the queue worker, never inline here.
 export async function action({ request }: ActionFunctionArgs) {
   const { shop, payload, topic } = await authenticate.webhook(request);
 
@@ -22,8 +20,6 @@ export async function action({ request }: ActionFunctionArgs) {
     order?.billing_address?.phone ||
     null;
 
-  // Normalize to E.164 (+countrycode...) — Shopify sometimes stores phone
-  // numbers without a leading '+' even when a country code is present.
   const phoneNumber = rawPhoneNumber
     ? (rawPhoneNumber.trim().startsWith("+") ? rawPhoneNumber.trim() : `+${rawPhoneNumber.replace(/\D/g, "")}`)
     : null;
@@ -40,19 +36,15 @@ export async function action({ request }: ActionFunctionArgs) {
     const fullName = `${firstName} ${lastName}`.trim() || null;
     const orderTotal = order?.total_price ? `${order.currency ?? ""} ${order.total_price}`.trim() : null;
     const orderUrl = order?.order_status_url || null;
+    const email = order?.customer?.email || order?.email || order?.contact_email || null;
 
-    // Auto-add this customer to the Subscribers table so merchants can see
-    // everyone who's placed an order — but with marketingConsent: false,
-    // since placing an order isn't marketing opt-in. Utility messages
-    // (this order confirmation, shipping updates) still send regardless;
-    // only broadcast/marketing sends respect this flag. If this number
-    // already opted in via the popup, don't downgrade their consent.
     await prisma.optin.upsert({
       where: { shopId_phoneNumber: { shopId: shopRow.id, phoneNumber } },
-      update: { name: fullName ?? undefined },
+      update: { name: fullName ?? undefined, email: email ?? undefined },
       create: {
         shopId: shopRow.id,
         phoneNumber,
+        email,
         name: fullName,
         source: "order",
         marketingConsent: false,
@@ -91,6 +83,24 @@ export async function action({ request }: ActionFunctionArgs) {
       orderId: String(order.id),
       orderNumber: order.name,
     });
+
+    try {
+      const orderFlows = await prisma.flow.findMany({
+        where: { shopId: shopRow.id, trigger: "ORDER_PLACED", enabled: true },
+      });
+      for (const flow of orderFlows) {
+        await startFlowRun({
+          flowId: flow.id,
+          shopId: shopRow.id,
+          phoneNumber,
+          email,
+          customerName: firstName || fullName,
+          orderId: String(order.id),
+        });
+      }
+    } catch (err) {
+      console.error(`Failed to start ORDER_PLACED flows for shop ${shopRow.id}:`, err);
+    }
   }
 
   console.log(`Webhook ${topic} processed for ${shop}`);
