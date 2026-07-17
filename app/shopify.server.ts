@@ -24,39 +24,63 @@ const shopify = shopifyApp({
   },
   billing: {
     [BILLING_PLANS.BASIC]: {
-      amount: 4.99,
-      currencyCode: "USD",
-      interval: BillingInterval.Every30Days,
+      lineItems: [
+        {
+          amount: 4.99,
+          currencyCode: "USD",
+          interval: BillingInterval.Every30Days,
+        },
+      ],
       trialDays: 7,
     },
     [BILLING_PLANS.BASIC_YEARLY]: {
-      amount: 47.90, // ~20% off 4.99 x 12
-      currencyCode: "USD",
-      interval: BillingInterval.Annual,
+      lineItems: [
+        {
+          amount: 47.90, // ~20% off 4.99 x 12
+          currencyCode: "USD",
+          interval: BillingInterval.Annual,
+        },
+      ],
       trialDays: 7,
     },
     [BILLING_PLANS.GROWTH]: {
-      amount: 8.99,
-      currencyCode: "USD",
-      interval: BillingInterval.Every30Days,
+      lineItems: [
+        {
+          amount: 8.99,
+          currencyCode: "USD",
+          interval: BillingInterval.Every30Days,
+        },
+      ],
       trialDays: 7,
     },
     [BILLING_PLANS.GROWTH_YEARLY]: {
-      amount: 86.30, // ~20% off 8.99 x 12
-      currencyCode: "USD",
-      interval: BillingInterval.Annual,
+      lineItems: [
+        {
+          amount: 86.30, // ~20% off 8.99 x 12
+          currencyCode: "USD",
+          interval: BillingInterval.Annual,
+        },
+      ],
       trialDays: 7,
     },
     [BILLING_PLANS.PRO]: {
-      amount: 14.99,
-      currencyCode: "USD",
-      interval: BillingInterval.Every30Days,
+      lineItems: [
+        {
+          amount: 14.99,
+          currencyCode: "USD",
+          interval: BillingInterval.Every30Days,
+        },
+      ],
       trialDays: 7,
     },
     [BILLING_PLANS.PRO_YEARLY]: {
-      amount: 143.90, // ~20% off 14.99 x 12
-      currencyCode: "USD",
-      interval: BillingInterval.Annual,
+      lineItems: [
+        {
+          amount: 143.90, // ~20% off 14.99 x 12
+          currencyCode: "USD",
+          interval: BillingInterval.Annual,
+        },
+      ],
       trialDays: 7,
     },
   },

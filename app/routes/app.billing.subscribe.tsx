@@ -2,9 +2,10 @@ import { json, type ActionFunctionArgs } from "@remix-run/node";
 import { useActionData } from "@remix-run/react";
 import { Page, Card, Banner, BlockStack, Button } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
+import { isDevelopmentStore } from "~/services/store-type.server";
 
 export async function action({ request }: ActionFunctionArgs) {
-  const { billing } = await authenticate.admin(request);
+  const { billing, admin } = await authenticate.admin(request);
   const formData = await request.formData();
   const plan = String(formData.get("plan"));
 
@@ -12,23 +13,20 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ error: "No plan specified." }, { status: 400 });
   }
 
+  // Development stores can't process real charges — see store-type.server.ts
+  const isDevStore = await isDevelopmentStore(admin);
+
   try {
-    // Hardcoded true for now while testing on a development store — dev
-    // stores cannot process real charges, so this must be true here.
-    // Before submitting for App Store review, this needs to become
-    // conditional again (false for real merchant stores) or the review
-    // team's real paid-store test will be charged as a test transaction
-    // instead of a real one.
     return await billing.request({
       plan,
-      isTest: true,
+      isTest: isDevStore,
       returnUrl: `${process.env.SHOPIFY_APP_URL}/app/billing`,
     });
   } catch (err) {
     if (err instanceof Response && err.status >= 300 && err.status < 400) {
       throw err;
     }
-    console.error(`billing.request failed for plan "${plan}":`, err);
+    console.error(`billing.request failed for plan "${plan}" (isDevStore: ${isDevStore}):`, err);
     if (err && typeof err === "object" && "errorData" in err) {
       console.error("billing.request errorData detail:", JSON.stringify((err as any).errorData));
     }

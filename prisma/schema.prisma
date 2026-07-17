@@ -26,6 +26,8 @@ model Session {
   locale        String?
   collaborator  Boolean?  @default(false)
   emailVerified Boolean?  @default(false)
+
+  @@map("session")
 }
 
 // ---------- App-specific models ----------
