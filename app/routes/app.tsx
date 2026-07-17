@@ -28,7 +28,6 @@ export default function App() {
         <Link to="/app/broadcasts">Broadcasts</Link>
         <Link to="/app/subscribers">Subscribers</Link>
         <Link to="/app/templates">Templates</Link>
-        <Link to="/app/offer-template">Create Offer Template</Link>
         <Link to="/app/flows">Flows</Link>
         <Link to="/app/popup-settings">Popup Settings</Link>
         <Link to="/app/chatbot-settings">Chatbot Settings</Link>

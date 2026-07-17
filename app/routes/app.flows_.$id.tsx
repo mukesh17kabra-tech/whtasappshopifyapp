@@ -1,6 +1,6 @@
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigate, useActionData } from "@remix-run/react";
-import { useState, useCallback } from "react";
+import { useLoaderData, useSubmit, useNavigate, useActionData, useFetcher } from "@remix-run/react";
+import { useState, useCallback, useEffect } from "react";
 import {
   Page,
   Card,
@@ -12,6 +12,9 @@ import {
   Select,
   Banner,
   Box,
+  RadioButton,
+  Autocomplete,
+  Link,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
@@ -29,7 +32,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 
   const templates = await prisma.template.findMany({
     where: { shopId: shop.id },
-    select: { id: true, name: true, channel: true },
+    select: { id: true, name: true, channel: true, category: true },
     orderBy: { createdAt: "desc" },
   });
 
@@ -47,13 +50,15 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const formData = await request.formData();
   const name = String(formData.get("name") ?? "").trim();
   const trigger = String(formData.get("trigger") ?? "ORDER_PLACED");
+  const triggerProductId = String(formData.get("triggerProductId") ?? "").trim() || null;
+  const triggerProductTitle = String(formData.get("triggerProductTitle") ?? "").trim() || null;
   const stepsJson = String(formData.get("steps") ?? "[]");
 
   if (!name) {
     return json({ error: "Flow name is required" }, { status: 400 });
   }
 
-  let steps: Array<{ type: string; delayDays?: number; templateId?: string }>;
+  let steps: Array<{ type: string; delayDays?: number; sendDate?: string; templateId?: string }>;
   try {
     steps = JSON.parse(stepsJson);
   } catch {
@@ -61,7 +66,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   }
 
   await prisma.$transaction([
-    prisma.flow.update({ where: { id: flow.id }, data: { name, trigger } }),
+    prisma.flow.update({ where: { id: flow.id }, data: { name, trigger, triggerProductId, triggerProductTitle } }),
     prisma.flowStep.deleteMany({ where: { flowId: flow.id } }),
     ...steps.map((step, index) =>
       prisma.flowStep.create({
@@ -69,7 +74,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
           flowId: flow.id,
           position: index,
           type: step.type,
-          delayDays: step.type === "DELAY" ? step.delayDays ?? 1 : null,
+          delayDays: step.type === "DELAY" && !step.sendDate ? step.delayDays ?? 1 : null,
+          sendDate: step.type === "DELAY" && step.sendDate ? new Date(step.sendDate) : null,
           templateId: step.type === "SEND_MESSAGE" ? step.templateId ?? null : null,
         },
       }),
@@ -82,7 +88,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 const TRIGGER_OPTIONS = [{ label: "Order Placed", value: "ORDER_PLACED" }];
 
 type UIStep =
-  | { type: "DELAY"; delayDays: number }
+  | { type: "DELAY"; mode: "days" | "date"; delayDays: number; sendDate: string }
   | { type: "SEND_MESSAGE"; templateId: string };
 
 export default function FlowEditor() {
@@ -90,16 +96,39 @@ export default function FlowEditor() {
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigate = useNavigate();
+  const resourcesFetcher = useFetcher<{ products: any[] }>();
 
   const [name, setName] = useState(flow.name);
   const [trigger, setTrigger] = useState(flow.trigger);
+  const [productFilter, setProductFilter] = useState<"any" | "specific">(
+    (flow as any).triggerProductId ? "specific" : "any",
+  );
+  const [productId, setProductId] = useState((flow as any).triggerProductId ?? "");
+  const [productTitle, setProductTitle] = useState((flow as any).triggerProductTitle ?? "");
+  const [productSearch, setProductSearch] = useState((flow as any).triggerProductTitle ?? "");
+
   const [steps, setSteps] = useState<UIStep[]>(
     flow.steps.map((s: any) =>
       s.type === "DELAY"
-        ? { type: "DELAY", delayDays: s.delayDays ?? 1 }
+        ? {
+            type: "DELAY",
+            mode: s.sendDate ? "date" : "days",
+            delayDays: s.delayDays ?? 1,
+            sendDate: s.sendDate ? new Date(s.sendDate).toISOString().slice(0, 10) : "",
+          }
         : { type: "SEND_MESSAGE", templateId: s.templateId ?? "" },
     ),
   );
+
+  useEffect(() => {
+    resourcesFetcher.load("/api/store-resources");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const products = resourcesFetcher.data?.products ?? [];
+  const filteredProducts = productSearch
+    ? products.filter((p: any) => p.title.toLowerCase().includes(productSearch.toLowerCase()))
+    : products;
 
   const templateOptions = [
     { label: "Select a template...", value: "" },
@@ -109,7 +138,9 @@ export default function FlowEditor() {
   const addStep = useCallback((type: "DELAY" | "SEND_MESSAGE") => {
     setSteps((prev) => [
       ...prev,
-      type === "DELAY" ? { type: "DELAY", delayDays: 1 } : { type: "SEND_MESSAGE", templateId: "" },
+      type === "DELAY"
+        ? { type: "DELAY", mode: "days", delayDays: 1, sendDate: "" }
+        : { type: "SEND_MESSAGE", templateId: "" },
     ]);
   }, []);
 
@@ -125,9 +156,20 @@ export default function FlowEditor() {
     const formData = new FormData();
     formData.append("name", name);
     formData.append("trigger", trigger);
-    formData.append("steps", JSON.stringify(steps));
+    formData.append("triggerProductId", productFilter === "specific" ? productId : "");
+    formData.append("triggerProductTitle", productFilter === "specific" ? productTitle : "");
+    formData.append(
+      "steps",
+      JSON.stringify(
+        steps.map((s) =>
+          s.type === "DELAY"
+            ? { type: "DELAY", delayDays: s.mode === "days" ? s.delayDays : undefined, sendDate: s.mode === "date" ? s.sendDate : undefined }
+            : s,
+        ),
+      ),
+    );
     submit(formData, { method: "post" });
-  }, [name, trigger, steps, submit]);
+  }, [name, trigger, productFilter, productId, productTitle, steps, submit]);
 
   return (
     <Page
@@ -145,18 +187,59 @@ export default function FlowEditor() {
         <Card>
           <BlockStack gap="400">
             <TextField label="Flow name" value={name} onChange={setName} autoComplete="off" />
+
             <Select
               label="Trigger — when should this flow start?"
               options={TRIGGER_OPTIONS}
               value={trigger}
               onChange={setTrigger}
             />
+
+            <BlockStack gap="200">
+              <Text as="p" variant="bodyMd" fontWeight="medium">Which orders should trigger this?</Text>
+              <RadioButton
+                label="Any product"
+                checked={productFilter === "any"}
+                onChange={() => setProductFilter("any")}
+              />
+              <RadioButton
+                label="Only orders containing a specific product"
+                checked={productFilter === "specific"}
+                onChange={() => setProductFilter("specific")}
+              />
+              {productFilter === "specific" && (
+                <Box maxWidth="400px">
+                  <Autocomplete
+                    options={filteredProducts.map((p: any) => ({ label: p.title, value: p.id ?? p.title }))}
+                    selected={productId ? [productId] : []}
+                    onSelect={(selected) => {
+                      const match = filteredProducts.find((p: any) => (p.id ?? p.title) === selected[0]);
+                      setProductId(selected[0] || "");
+                      setProductTitle(match?.title || "");
+                    }}
+                    textField={
+                      <Autocomplete.TextField
+                        label="Product"
+                        labelHidden
+                        value={productSearch}
+                        onChange={setProductSearch}
+                        placeholder={resourcesFetcher.state === "loading" ? "Loading products..." : "Search products..."}
+                        autoComplete="off"
+                      />
+                    }
+                  />
+                </Box>
+              )}
+            </BlockStack>
           </BlockStack>
         </Card>
 
         <Card>
           <BlockStack gap="400">
-            <Text as="h2" variant="headingMd">Steps</Text>
+            <InlineStack align="space-between" blockAlign="center">
+              <Text as="h2" variant="headingMd">Steps</Text>
+              <Link url="/app/templates" target="_blank">Manage templates ↗</Link>
+            </InlineStack>
             <Text as="p" variant="bodySm" tone="subdued">
               Runs top to bottom for each customer who triggers this flow.
               Add a wait, then a message, then another wait — however many
@@ -181,19 +264,46 @@ export default function FlowEditor() {
                     </InlineStack>
 
                     {step.type === "DELAY" ? (
-                      <InlineStack gap="200" blockAlign="center">
-                        <Box minWidth="100px">
-                          <TextField
-                            label="Days"
-                            labelHidden
-                            type="number"
-                            value={String(step.delayDays)}
-                            onChange={(v) => updateStep(index, { delayDays: Math.max(1, parseInt(v) || 1) })}
-                            autoComplete="off"
+                      <BlockStack gap="200">
+                        <InlineStack gap="200">
+                          <RadioButton
+                            label="Wait a number of days"
+                            checked={step.mode === "days"}
+                            onChange={() => updateStep(index, { mode: "days" })}
                           />
-                        </Box>
-                        <Text as="span" variant="bodyMd">day(s) after the previous step</Text>
-                      </InlineStack>
+                          <RadioButton
+                            label="Send on a specific date"
+                            checked={step.mode === "date"}
+                            onChange={() => updateStep(index, { mode: "date" })}
+                          />
+                        </InlineStack>
+                        {step.mode === "days" ? (
+                          <InlineStack gap="200" blockAlign="center">
+                            <Box minWidth="100px">
+                              <TextField
+                                label="Days"
+                                labelHidden
+                                type="number"
+                                value={String(step.delayDays)}
+                                onChange={(v) => updateStep(index, { delayDays: Math.max(1, parseInt(v) || 1) })}
+                                autoComplete="off"
+                              />
+                            </Box>
+                            <Text as="span" variant="bodyMd">day(s) after the previous step</Text>
+                          </InlineStack>
+                        ) : (
+                          <Box minWidth="200px">
+                            <TextField
+                              label="Date"
+                              labelHidden
+                              type="date"
+                              value={step.sendDate}
+                              onChange={(v) => updateStep(index, { sendDate: v })}
+                              autoComplete="off"
+                            />
+                          </Box>
+                        )}
+                      </BlockStack>
                     ) : (
                       <Select
                         label="Template to send"
@@ -220,10 +330,10 @@ export default function FlowEditor() {
         </Box>
 
         {templates.length === 0 && (
-          <Banner tone="warning">
-            You don't have any templates yet — create some on the Templates
-            page (or add starter templates) before adding "Send Message"
-            steps here.
+          <Banner tone="warning" action={{ content: "Create templates", url: "/app/templates" }}>
+            You don't have any templates yet — go to Templates → Flow
+            Template tab (or add starter templates there) before adding
+            "Send Message" steps here.
           </Banner>
         )}
       </BlockStack>

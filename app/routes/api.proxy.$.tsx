@@ -221,6 +221,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const body = await request.json();
   const phoneNumber: string | undefined = body.phoneNumber;
   const name: string | undefined = body.name;
+  const email: string | undefined = body.email;
   const consent: boolean = Boolean(body.consent);
 
   if (!phoneNumber || !consent) {
@@ -238,6 +239,8 @@ export async function action({ request, params }: ActionFunctionArgs) {
     return Response.json({ error: "Invalid phone number" }, { status: 400 });
   }
 
+  const validEmail = email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email.trim() : null;
+
   const shop = await prisma.shop.findUnique({
     where: { shopDomain: session.shop },
   });
@@ -247,11 +250,12 @@ export async function action({ request, params }: ActionFunctionArgs) {
 
   await prisma.optin.upsert({
     where: { shopId_phoneNumber: { shopId: shop.id, phoneNumber } },
-    update: { optedOutAt: null, name: name.trim() },
+    update: { optedOutAt: null, name: name.trim(), ...(validEmail && { email: validEmail }) },
     create: {
       shopId: shop.id,
       phoneNumber,
       name: name.trim(),
+      email: validEmail,
       source: "popup",
     },
   });

@@ -110,6 +110,7 @@ export async function action({ request }: ActionFunctionArgs) {
     const minLen = Number(formData.get("minLen") ?? 6);
     const maxLen = Number(formData.get("maxLen") ?? 14);
     const name = String(formData.get("name") ?? "").trim() || null;
+    const email = String(formData.get("email") ?? "").trim() || null;
     const isOther = dialCode === "";
 
     if (!localNumber) return json({ error: "Enter a phone number." }, { status: 400 });
@@ -129,11 +130,14 @@ export async function action({ request }: ActionFunctionArgs) {
     if (!isValidPhone(phoneNumber)) {
       return json({ error: `"${phoneNumber}" doesn't look like a valid phone number.` }, { status: 400 });
     }
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return json({ error: `"${email}" doesn't look like a valid email address.` }, { status: 400 });
+    }
 
     await prisma.optin.upsert({
       where: { shopId_phoneNumber: { shopId: shop.id, phoneNumber } },
-      update: { optedOutAt: null, ...(name && { name }) },
-      create: { shopId: shop.id, phoneNumber, name, source: "manual" },
+      update: { optedOutAt: null, ...(name && { name }), ...(email && { email }) },
+      create: { shopId: shop.id, phoneNumber, name, email, source: "manual" },
     });
 
     return json({ success: true, added: 1 });
@@ -152,6 +156,7 @@ export async function action({ request }: ActionFunctionArgs) {
       const columns = line.split(",").map((c) => c.trim());
       const firstColumn = columns[0];
       const nameColumn = columns[1] || null;
+      const emailColumn = columns[2] && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(columns[2]) ? columns[2] : null;
       const phoneNumber = normalizePhone(firstColumn);
 
       if (!phoneNumber) {
@@ -167,7 +172,7 @@ export async function action({ request }: ActionFunctionArgs) {
           if (existing.optedOutAt) {
             await prisma.optin.update({
               where: { id: existing.id },
-              data: { optedOutAt: null, ...(nameColumn && { name: nameColumn }) },
+              data: { optedOutAt: null, ...(nameColumn && { name: nameColumn }), ...(emailColumn && { email: emailColumn }) },
             });
             results.added++;
           } else {
@@ -175,7 +180,7 @@ export async function action({ request }: ActionFunctionArgs) {
           }
         } else {
           await prisma.optin.create({
-            data: { shopId: shop.id, phoneNumber, name: nameColumn, source: "csv_import" },
+            data: { shopId: shop.id, phoneNumber, name: nameColumn, email: emailColumn, source: "csv_import" },
           });
           results.added++;
         }
@@ -242,6 +247,7 @@ export default function Subscribers() {
   const [countryIndex, setCountryIndex] = useState("0");
   const [localNumber, setLocalNumber] = useState("");
   const [manualName, setManualName] = useState("");
+  const [manualEmail, setManualEmail] = useState("");
   const [csvFileName, setCsvFileName] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -267,10 +273,12 @@ export default function Subscribers() {
     formData.append("minLen", String(selectedCountry.minLen));
     formData.append("maxLen", String(selectedCountry.maxLen));
     formData.append("name", manualName);
+    formData.append("email", manualEmail);
     submit(formData, { method: "post" });
     setLocalNumber("");
     setManualName("");
-  }, [selectedCountry, localNumber, manualName, submit]);
+    setManualEmail("");
+  }, [selectedCountry, localNumber, manualName, manualEmail, submit]);
 
   const handleCsvSelect = useCallback(
     (file: File) => {
@@ -337,6 +345,7 @@ export default function Subscribers() {
     />,
     o.name || "—",
     o.phoneNumber,
+    o.email || "—",
     o.source,
     <MarketingToggle key={`${o.id}-mkt`} id={o.id} consent={o.marketingConsent} />,
     new Date(o.consentAt).toLocaleDateString(),
@@ -373,13 +382,23 @@ export default function Subscribers() {
               <Box minWidth="340px">
                 <BlockStack gap="200">
                   <Text as="p" variant="bodyMd" fontWeight="medium">Add one number</Text>
-                  <InlineStack gap="200" blockAlign="end">
+                  <InlineStack gap="200" blockAlign="end" wrap>
                     <Box minWidth="140px">
                       <TextField
                         label="Name (optional)"
                         placeholder="Rahul Sharma"
                         value={manualName}
                         onChange={setManualName}
+                        autoComplete="off"
+                      />
+                    </Box>
+                    <Box minWidth="180px">
+                      <TextField
+                        label="Email (optional)"
+                        placeholder="rahul@example.com"
+                        type="email"
+                        value={manualEmail}
+                        onChange={setManualEmail}
                         autoComplete="off"
                       />
                     </Box>
@@ -431,7 +450,7 @@ export default function Subscribers() {
                     {csvFileName && <Text as="span" variant="bodySm">{csvFileName}</Text>}
                   </InlineStack>
                   <Text as="p" variant="bodySm" tone="subdued">
-                    One phone number per row, optionally with a name in a second column.
+                    One phone number per row, optionally with a name in a second column and an email in a third column.
                   </Text>
                 </BlockStack>
               </Box>
@@ -477,8 +496,8 @@ export default function Subscribers() {
                   />
                 </InlineStack>
                 <DataTable
-                  columnContentTypes={["text", "text", "text", "text", "text", "text", "text", "text"]}
-                  headings={["", "Name", "Phone Number", "Source", "Marketing", "Opted In", "Status", ""]}
+                  columnContentTypes={["text", "text", "text", "text", "text", "text", "text", "text", "text"]}
+                  headings={["", "Name", "Phone Number", "Email", "Source", "Marketing", "Opted In", "Status", ""]}
                   rows={rows}
                 />
                 {totalPages > 1 && (

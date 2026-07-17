@@ -195,27 +195,32 @@ model ChatbotSettings {
 // ---------- Flow automation (Klaviyo-style) ----------
 
 model Flow {
-  id        String     @id @default(cuid())
-  shop      Shop       @relation(fields: [shopId], references: [id])
-  shopId    String
-  name      String
-  trigger   String     // "ORDER_PLACED" — more triggers can be added later
-  enabled   Boolean    @default(true)
-  createdAt DateTime   @default(now())
-  steps     FlowStep[]
-  runs      FlowRun[]
+  id                  String     @id @default(cuid())
+  shop                Shop       @relation(fields: [shopId], references: [id])
+  shopId              String
+  name                String
+  trigger             String     // "ORDER_PLACED" — more triggers can be added later
+  // Optional condition: only start this flow if the order contains this
+  // specific product (Klaviyo-style trigger filter). Null = any product.
+  triggerProductId    String?
+  triggerProductTitle String?
+  enabled             Boolean    @default(true)
+  createdAt           DateTime   @default(now())
+  steps               FlowStep[]
+  runs                FlowRun[]
 
   @@index([shopId])
 }
 
 model FlowStep {
-  id         String  @id @default(cuid())
-  flow       Flow    @relation(fields: [flowId], references: [id])
+  id         String    @id @default(cuid())
+  flow       Flow      @relation(fields: [flowId], references: [id])
   flowId     String
-  position   Int     // order within the flow, 0-indexed
-  type       String  // "DELAY" | "SEND_MESSAGE"
-  delayDays  Int?    // used when type = "DELAY"
-  templateId String? // used when type = "SEND_MESSAGE", references Template.id
+  position   Int       // order within the flow, 0-indexed
+  type       String    // "DELAY" | "SEND_MESSAGE"
+  delayDays  Int?      // used when type = "DELAY" and no sendDate is set
+  sendDate   DateTime? // used when type = "DELAY" instead of delayDays — send on this specific date
+  templateId String?   // used when type = "SEND_MESSAGE", references Template.id
 
   @@index([flowId])
 }

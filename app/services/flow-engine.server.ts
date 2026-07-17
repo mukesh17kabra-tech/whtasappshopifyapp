@@ -23,8 +23,19 @@ export async function processFlowRunStep(flowRunId: string): Promise<void> {
     const step = steps[stepIndex];
 
     if (step.type === "DELAY") {
-      const days = step.delayDays ?? 1;
-      const nextRunAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+      let nextRunAt: Date;
+      if (step.sendDate) {
+        nextRunAt = step.sendDate;
+        // If the date's already in the past (e.g. flow was turned on late),
+        // just move on right away rather than scheduling a job in the past.
+        if (nextRunAt.getTime() <= Date.now()) {
+          stepIndex += 1;
+          continue;
+        }
+      } else {
+        const days = step.delayDays ?? 1;
+        nextRunAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+      }
       await prisma.flowRun.update({
         where: { id: flowRunId },
         data: { currentStep: stepIndex + 1, nextRunAt },

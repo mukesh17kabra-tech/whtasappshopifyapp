@@ -88,7 +88,16 @@ export async function action({ request }: ActionFunctionArgs) {
       const orderFlows = await prisma.flow.findMany({
         where: { shopId: shopRow.id, trigger: "ORDER_PLACED", enabled: true },
       });
+      const lineItemProductIds: string[] = (order?.line_items ?? [])
+        .map((li: any) => (li.product_id != null ? String(li.product_id) : null))
+        .filter(Boolean);
+
       for (const flow of orderFlows) {
+        // If this flow is restricted to a specific product, only start it
+        // for orders that actually contain that product.
+        if (flow.triggerProductId && !lineItemProductIds.includes(flow.triggerProductId)) {
+          continue;
+        }
         await startFlowRun({
           flowId: flow.id,
           shopId: shopRow.id,

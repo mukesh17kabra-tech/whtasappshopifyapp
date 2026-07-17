@@ -26,12 +26,16 @@ async function fetchProducts(admin: any, shopDomain: string) {
     const response = await admin.graphql(`
       query Products {
         products(first: 50, sortKey: TITLE) {
-          nodes { title handle onlineStoreUrl }
+          nodes { id title handle onlineStoreUrl }
         }
       }
     `);
     const data = await response.json();
     return (data?.data?.products?.nodes ?? []).map((p: any) => ({
+      // Shopify's GraphQL id is "gid://shopify/Product/123456" — order
+      // webhooks (REST-shaped) report line_items.product_id as just
+      // "123456", so we extract that numeric part here for matching.
+      id: p.id?.split("/").pop() ?? null,
       title: p.title,
       url: p.onlineStoreUrl || `https://${shopDomain}/products/${p.handle}`,
     }));
