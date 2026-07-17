@@ -21,7 +21,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
 
   if (!shop) {
-    return json({ settings: null, supportEmail: null });
+    return json({ settings: null });
   }
 
   const settings = await prisma.popupSettings.upsert({
@@ -30,7 +30,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     create: { shopId: shop.id },
   });
 
-  return json({ settings, supportEmail: shop.supportEmail });
+  return json({ settings });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -44,13 +44,9 @@ export async function action({ request }: ActionFunctionArgs) {
   const subheading = String(formData.get("subheading") ?? "").trim();
   const imageUrl = String(formData.get("imageUrl") ?? "").trim() || null;
   const delayMs = Number(formData.get("delayMs") ?? 3000);
-  const supportEmail = String(formData.get("supportEmail") ?? "").trim() || null;
 
   if (!heading) {
     return json({ error: "Heading can't be empty." }, { status: 400 });
-  }
-  if (supportEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(supportEmail)) {
-    return json({ error: "That doesn't look like a valid email address." }, { status: 400 });
   }
 
   await prisma.popupSettings.upsert({
@@ -59,13 +55,11 @@ export async function action({ request }: ActionFunctionArgs) {
     create: { shopId: shop.id, enabled, heading, subheading, imageUrl, delayMs },
   });
 
-  await prisma.shop.update({ where: { id: shop.id }, data: { supportEmail } });
-
   return json({ success: true });
 }
 
 export default function PopupSettings() {
-  const { settings, supportEmail: initialSupportEmail } = useLoaderData<typeof loader>();
+  const { settings } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -78,7 +72,6 @@ export default function PopupSettings() {
   );
   const [imageUrl, setImageUrl] = useState(settings?.imageUrl ?? "");
   const [delayMs, setDelayMs] = useState(String(settings?.delayMs ?? 3000));
-  const [supportEmail, setSupportEmail] = useState(initialSupportEmail ?? "");
   const [imageUploading, setImageUploading] = useState(false);
   const [imageUploadError, setImageUploadError] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -118,9 +111,8 @@ export default function PopupSettings() {
     formData.append("subheading", subheading);
     formData.append("imageUrl", imageUrl);
     formData.append("delayMs", delayMs);
-    formData.append("supportEmail", supportEmail);
     submit(formData, { method: "post" });
-  }, [enabled, heading, subheading, imageUrl, delayMs, supportEmail, submit]);
+  }, [enabled, heading, subheading, imageUrl, delayMs, submit]);
 
   return (
     <Page title="Popup Settings">
@@ -207,24 +199,6 @@ export default function PopupSettings() {
                   {imageUploadError}
                 </Text>
               )}
-            </BlockStack>
-
-            <BlockStack gap="200">
-              <Text as="p" variant="bodyMd" fontWeight="medium">Your email address</Text>
-              <Text as="p" variant="bodySm" tone="subdued">
-                Used as the Reply-To address on marketing emails (Offer
-                Templates and Flows) — when a customer replies, it goes
-                straight to this inbox, whatever email provider you use.
-              </Text>
-              <TextField
-                label=""
-                labelHidden
-                type="email"
-                value={supportEmail}
-                onChange={setSupportEmail}
-                autoComplete="off"
-                placeholder="you@example.com"
-              />
             </BlockStack>
 
             <Box>

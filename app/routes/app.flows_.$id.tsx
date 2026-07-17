@@ -132,7 +132,7 @@ export default function FlowEditor() {
 
   const templateOptions = [
     { label: "Select a template...", value: "" },
-    ...templates.map((t) => ({ label: `${t.name} (${t.channel})`, value: t.id })),
+    ...templates.filter((t) => t.category === "MARKETING").map((t) => ({ label: `${t.name} (${t.channel})`, value: t.id })),
   ];
 
   const addStep = useCallback((type: "DELAY" | "SEND_MESSAGE") => {
@@ -238,7 +238,7 @@ export default function FlowEditor() {
           <BlockStack gap="400">
             <InlineStack align="space-between" blockAlign="center">
               <Text as="h2" variant="headingMd">Steps</Text>
-              <Link url="/app/templates" target="_blank">Manage templates ↗</Link>
+              <Link url="/app/templates">Manage templates ↗</Link>
             </InlineStack>
             <Text as="p" variant="bodySm" tone="subdued">
               Runs top to bottom for each customer who triggers this flow.

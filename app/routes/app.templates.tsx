@@ -22,8 +22,6 @@ import {
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
 
-const MARKETING_VARIABLES = [{ label: "First Name", tag: "{first_name}" }];
-
 const ORDER_VARIABLES = [
   { label: "First Name", tag: "{first_name}" },
   { label: "Last Name", tag: "{last_name}" },
@@ -52,6 +50,12 @@ const MARKETING_STARTERS = [
   { name: "Welcome Offer (Email)", channel: "email", subject: "Welcome! Here's 10% off your first order", body: "Hi {first_name},\n\nThanks for joining us! As a welcome gift, enjoy 10% off your first order with code WELCOME10.\n\nHappy shopping!" },
   { name: "We Miss You (Email)", channel: "email", subject: "We miss you!", body: "Hi {first_name},\n\nIt's been a while since we've seen you! We've added some great new products we think you'll love.\n\nCome take a look." },
   { name: "Flash Sale (Email)", channel: "email", subject: "24-hour flash sale — don't miss it!", body: "Hi {first_name},\n\nOur flash sale just went live and it's only running for 24 hours. Shop now before it's gone!" },
+  { name: "Thank You for Your Order", channel: "whatsapp", body: "Hi {first_name}, thank you so much for your order {order_number}! We really appreciate your business." },
+  { name: "How Was Your Experience?", channel: "whatsapp", body: "Hi {first_name}, your order {order_number} should have arrived by now — we'd love to hear how everything went!" },
+  { name: "Leave Us a Review", channel: "whatsapp", body: "Hi {first_name}, if you're happy with your order {order_number}, would you mind leaving us a quick review? It really helps us out." },
+  { name: "Complete Your Purchase", channel: "whatsapp", body: "Hi {first_name}, just checking in about order {order_number} — let us know if you have any questions!" },
+  { name: "Time to Restock?", channel: "whatsapp", body: "Hi {first_name}, it's been a little while since order {order_number} — running low on anything? We're here if you need to reorder." },
+  { name: "Loyalty Check-in", channel: "whatsapp", body: "Hi {first_name}, just a friendly note to say thanks for being a customer since order {order_number}. We've got new arrivals you might like!" },
 ];
 
 const ORDER_STARTERS: Record<string, string> = {
@@ -63,35 +67,24 @@ const ORDER_STARTERS: Record<string, string> = {
   DELIVERY_FAILED: "Hi {first_name}, unfortunately delivery of your order {order_number} failed. Please contact us for help.",
 };
 
-const FLOW_STARTERS = [
-  { name: "Thank You for Your Order", body: "Hi {first_name}, thank you so much for your order {order_number}! We really appreciate your business." },
-  { name: "How Was Your Experience?", body: "Hi {first_name}, your order {order_number} should have arrived by now — we'd love to hear how everything went!" },
-  { name: "Leave Us a Review", body: "Hi {first_name}, if you're happy with your order {order_number}, would you mind leaving us a quick review? It really helps us out." },
-  { name: "Complete Your Purchase", body: "Hi {first_name}, just checking in about order {order_number} — let us know if you have any questions!" },
-  { name: "Time to Restock?", body: "Hi {first_name}, it's been a little while since order {order_number} — running low on anything? We're here if you need to reorder." },
-  { name: "Loyalty Check-in", body: "Hi {first_name}, just a friendly note to say thanks for being a customer since order {order_number}. We've got new arrivals you might like!" },
-];
-
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
 
-  if (!shop) return json({ marketingTemplates: [], orderTemplates: [], flowTemplates: [], connected: false });
+  if (!shop) return json({ marketingTemplates: [], orderTemplates: [], connected: false });
 
   const allTemplates = await prisma.template.findMany({
     where: { shopId: shop.id },
     orderBy: { createdAt: "desc" },
   });
 
-  const marketingTemplates = allTemplates.filter((t) => t.category === "MARKETING");
   const orderCategoryKeys = ORDER_CATEGORIES.map((c) => c.key);
+  const marketingTemplates = allTemplates.filter((t) => !orderCategoryKeys.includes(t.category));
   const orderTemplates = allTemplates.filter((t) => orderCategoryKeys.includes(t.category));
-  const flowTemplates = allTemplates.filter((t) => t.category === "FLOW");
 
   return json({
     marketingTemplates: marketingTemplates.map((t) => ({ ...t, createdAt: t.createdAt.toISOString() })),
     orderTemplates: orderTemplates.map((t) => ({ ...t, createdAt: t.createdAt.toISOString() })),
-    flowTemplates: flowTemplates.map((t) => ({ ...t, createdAt: t.createdAt.toISOString() })),
     connected: shop.whatsappBridgeConnected,
   });
 }
@@ -114,23 +107,17 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ success: true });
   }
 
-  if (intent === "seed-marketing" || intent === "seed-flow") {
-    const category = intent === "seed-marketing" ? "MARKETING" : "FLOW";
-    const existing = await prisma.template.count({ where: { shopId: shop.id, category } });
+  if (intent === "seed-marketing") {
+    const existing = await prisma.template.count({ where: { shopId: shop.id, category: "MARKETING" } });
     if (existing > 0) {
       return json({ error: "You already have templates here — starter templates are only added once." }, { status: 400 });
     }
 
-    const starters =
-      category === "MARKETING"
-        ? MARKETING_STARTERS.map((s) => ({ ...s, subject: (s as any).subject ?? null }))
-        : FLOW_STARTERS.map((s) => ({ name: s.name, channel: "whatsapp", subject: null, body: s.body }));
-
     await prisma.template.createMany({
-      data: starters.map((s: any) => ({
+      data: MARKETING_STARTERS.map((s: any) => ({
         shopId: shop.id,
         name: s.name,
-        category,
+        category: "MARKETING",
         channel: s.channel,
         subject: s.subject ?? null,
         body: s.body,
@@ -138,7 +125,7 @@ export async function action({ request }: ActionFunctionArgs) {
       })),
     });
 
-    return json({ success: true, seeded: starters.length });
+    return json({ success: true, seeded: MARKETING_STARTERS.length });
   }
 
   if (intent === "seed-order") {
@@ -228,7 +215,7 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function Templates() {
-  const { marketingTemplates, orderTemplates, flowTemplates, connected } = useLoaderData<typeof loader>();
+  const { marketingTemplates, orderTemplates, connected } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -261,9 +248,8 @@ export default function Templates() {
 
         <Tabs
           tabs={[
-            { id: "marketing", content: "Marketing" },
+            { id: "marketing-flow", content: "Marketing & Flow Templates" },
             { id: "order-notifications", content: "Order Notifications" },
-            { id: "flow-template", content: "Flow Template" },
           ]}
           selected={selectedTab}
           onSelect={setSelectedTab}
@@ -277,26 +263,13 @@ export default function Templates() {
             isSaving={isSaving}
             onDelete={handleDelete}
             submit={submit}
-            variables={MARKETING_VARIABLES}
-            showResourcePicker
-            seedIntent="seed-marketing"
-            intro='Marketing templates are for broadcasts — they only support First Name as a variable, since a broadcast has no single order tied to it.'
-          />
-        ) : selectedTab === 1 ? (
-          <OrderTab templates={orderTemplates} isSaving={isSaving} submit={submit} />
-        ) : (
-          <TemplateComposerTab
-            key="flow"
-            category="FLOW"
-            templates={flowTemplates}
-            isSaving={isSaving}
-            onDelete={handleDelete}
-            submit={submit}
             variables={ORDER_VARIABLES}
             showResourcePicker
-            seedIntent="seed-flow"
-            intro="Flow templates are used as steps inside your Flows (Flows page) — since flows trigger from a real order, the full set of order variables works here."
+            seedIntent="seed-marketing"
+            intro="Used for broadcasts (Broadcasts page) and as steps inside your Flows (Flows page). Since a customer's order data is available when a Flow sends, the full set of order variables works here too — for a plain broadcast without a Flow, only First Name will actually fill in."
           />
+        ) : (
+          <OrderTab templates={orderTemplates} isSaving={isSaving} submit={submit} />
         )}
       </BlockStack>
     </Page>
@@ -491,6 +464,16 @@ function TemplateComposerTab({ category, templates, isSaving, onDelete, submit, 
                   <Text as="p" variant="bodySm" tone="subdued">
                     Pulled live from your store.
                   </Text>
+                  {resourcesFetcher.state === "idle" && resourcesFetcher.data &&
+                    products.length === 0 && collections.length === 0 && discounts.length === 0 && (
+                    <Banner tone="warning">
+                      Couldn't load any products, collections, or discount
+                      codes from your store — this usually means the
+                      Admin API session had an issue. Try reloading this
+                      page; if it keeps happening, check Vercel's logs for
+                      "Failed to fetch products" around this time.
+                    </Banner>
+                  )}
                   <InlineStack gap="200" blockAlign="end" wrap>
                     <Box minWidth="140px">
                       <Select

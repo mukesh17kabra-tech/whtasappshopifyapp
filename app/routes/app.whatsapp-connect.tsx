@@ -12,6 +12,7 @@ import {
   InlineStack,
   Badge,
   Spinner,
+  TextField,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
@@ -24,6 +25,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     shopId: shop?.id ?? "",
     connected: shop?.whatsappBridgeConnected ?? false,
     connectedAt: shop?.whatsappConnectedAt?.toISOString() ?? null,
+    supportEmail: shop?.supportEmail ?? null,
   });
 }
 
@@ -37,6 +39,16 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const formData = await request.formData();
   const intent = formData.get("intent");
+
+  if (intent === "save-support-email") {
+    const supportEmail = String(formData.get("supportEmail") ?? "").trim() || null;
+    if (supportEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(supportEmail)) {
+      return json({ error: "That doesn't look like a valid email address." }, { status: 400 });
+    }
+    await prisma.shop.update({ where: { id: shop.id }, data: { supportEmail } });
+    return json({ success: true, savedEmail: true });
+  }
+
   const bridgeUrl = process.env.WHATSAPP_BRIDGE_URL;
   const bridgeSecret = process.env.WHATSAPP_BRIDGE_SECRET;
 
@@ -112,11 +124,20 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function WhatsappConnect() {
-  const { connected: initiallyConnected, connectedAt } = useLoaderData<typeof loader>();
+  const { connected: initiallyConnected, connectedAt, supportEmail: initialSupportEmail } = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  const emailFetcher = useFetcher<typeof action>();
   const [connected, setConnected] = useState(initiallyConnected);
   const [qr, setQr] = useState<string | null>(null);
   const [polling, setPolling] = useState(false);
+  const [supportEmail, setSupportEmail] = useState(initialSupportEmail ?? "");
+
+  const handleSaveEmail = useCallback(() => {
+    const formData = new FormData();
+    formData.append("intent", "save-support-email");
+    formData.append("supportEmail", supportEmail);
+    emailFetcher.submit(formData, { method: "post" });
+  }, [supportEmail, emailFetcher]);
 
   // On page load, always do a one-time reconciliation check — this catches
   // the case where the bridge actually connected successfully (you scanned
@@ -290,6 +311,40 @@ export default function WhatsappConnect() {
               dedicated number if you can, and grow your sending volume
               gradually.
             </Text>
+          </BlockStack>
+        </Card>
+
+        <Card>
+          <BlockStack gap="200">
+            <Text as="h3" variant="headingSm">Your email address</Text>
+            <Text as="p" variant="bodySm" tone="subdued">
+              Used as the Reply-To address on marketing emails (Offer
+              Templates and Flows) — when a customer replies, it goes
+              straight to this inbox, whatever email provider you use
+              (Gmail, Yahoo, or your own domain).
+            </Text>
+            <InlineStack gap="200" blockAlign="end">
+              <Box minWidth="280px">
+                <TextField
+                  label=""
+                  labelHidden
+                  type="email"
+                  value={supportEmail}
+                  onChange={setSupportEmail}
+                  autoComplete="off"
+                  placeholder="you@example.com"
+                />
+              </Box>
+              <Button onClick={handleSaveEmail} loading={emailFetcher.state === "submitting"}>
+                Save
+              </Button>
+            </InlineStack>
+            {emailFetcher.data && "error" in emailFetcher.data && (
+              <Text as="p" variant="bodySm" tone="critical">{emailFetcher.data.error}</Text>
+            )}
+            {emailFetcher.data && "savedEmail" in emailFetcher.data && (
+              <Text as="p" variant="bodySm" tone="success">Saved.</Text>
+            )}
           </BlockStack>
         </Card>
       </BlockStack>
