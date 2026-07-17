@@ -14,14 +14,13 @@
   "dependencies": {
     "@neondatabase/serverless": "^0.10.4",
     "@prisma/adapter-neon": "^5.22.0",
-    "@prisma/client": "^6.19.3",
+    "@prisma/client": "^5.22.0",
     "@remix-run/node": "^2.15.0",
     "@remix-run/react": "^2.15.0",
     "@remix-run/serve": "^2.15.0",
     "@shopify/app-bridge-react": "^4.1.6",
     "@shopify/polaris": "^13.9.0",
     "@shopify/shopify-app-remix": "^4.2.1",
-    "@shopify/shopify-app-session-storage-prisma": "^9.0.1",
     "@upstash/qstash": "^2.7.20",
     "@vercel/blob": "^0.27.1",
     "isbot": "^5.1.17",
@@ -31,7 +30,7 @@
   },
   "devDependencies": {
     "@remix-run/dev": "^2.15.0",
-    "prisma": "^6.19.3",
+    "prisma": "^5.22.0",
     "typescript": "^5.6.3",
     "vite": "^5.4.11",
     "vite-tsconfig-paths": "^5.1.4"
