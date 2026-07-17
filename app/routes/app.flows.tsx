@@ -1,6 +1,6 @@
 import { json, type ActionFunctionArgs, type LoaderFunctionArgs } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigate } from "@remix-run/react";
-import { useCallback } from "react";
+import { useLoaderData, useSubmit, useNavigate, useFetcher } from "@remix-run/react";
+import { useCallback, useEffect } from "react";
 import {
   Page,
   Card,
@@ -11,6 +11,7 @@ import {
   Badge,
   EmptyState,
   DataTable,
+  Banner,
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
@@ -50,7 +51,7 @@ export async function action({ request }: ActionFunctionArgs) {
     const flow = await prisma.flow.create({
       data: { shopId: shop.id, name: "New Flow", trigger: "ORDER_PLACED", enabled: false },
     });
-    return json({ redirectTo: `/app/flows/${flow.id}` });
+    return json({ success: true, redirectTo: `/app/flows/${flow.id}` });
   }
 
   if (intent === "toggle") {
@@ -84,14 +85,24 @@ export default function Flows() {
   const { flows } = useLoaderData<typeof loader>();
   const submit = useSubmit();
   const navigate = useNavigate();
+  // useFetcher is the correct Remix pattern for "submit + read the response
+  // without a full page navigation" — a raw fetch() call here was the bug:
+  // it doesn't reliably carry the embedded app's session token, so the
+  // response was inconsistent and the redirect never fired, even though
+  // the Flow was actually being created in the database.
+  const createFetcher = useFetcher<typeof action>();
 
-  const handleCreate = useCallback(async () => {
+  useEffect(() => {
+    if (createFetcher.data && "redirectTo" in createFetcher.data && createFetcher.data.redirectTo) {
+      navigate(createFetcher.data.redirectTo);
+    }
+  }, [createFetcher.data, navigate]);
+
+  const handleCreate = useCallback(() => {
     const formData = new FormData();
     formData.append("intent", "create");
-    const res = await fetch("/app/flows", { method: "POST", body: formData });
-    const data = await res.json();
-    if (data.redirectTo) navigate(data.redirectTo);
-  }, [navigate]);
+    createFetcher.submit(formData, { method: "post" });
+  }, [createFetcher]);
 
   const handleToggle = useCallback(
     (id: string) => {
@@ -113,6 +124,8 @@ export default function Flows() {
     [submit],
   );
 
+  const isCreating = createFetcher.state !== "idle";
+
   const rows = flows.map((f) => [
     f.name,
     TRIGGER_LABELS[f.trigger] ?? f.trigger,
@@ -122,7 +135,9 @@ export default function Flows() {
       {f.enabled ? "Live" : "Off"}
     </Badge>,
     <InlineStack key={`${f.id}-actions`} gap="200">
-      <Button onClick={() => navigate(`/app/flows/${f.id}`)}>Edit</Button>
+      {/* url prop renders this as a real link, which is the more reliable
+          way to navigate from inside a DataTable cell than onClick+navigate */}
+      <Button url={`/app/flows/${f.id}`}>Edit</Button>
       <Button onClick={() => handleToggle(f.id)}>{f.enabled ? "Turn off" : "Turn on"}</Button>
       <Button tone="critical" variant="plain" onClick={() => handleDelete(f.id)}>Delete</Button>
     </InlineStack>,
@@ -132,9 +147,13 @@ export default function Flows() {
     <Page
       title="Flows"
       subtitle="Automated sequences that trigger from an event — like Klaviyo's flows"
-      primaryAction={{ content: "Create flow", onAction: handleCreate }}
+      primaryAction={{ content: "Create flow", onAction: handleCreate, loading: isCreating }}
     >
       <BlockStack gap="400">
+        {createFetcher.data && "error" in createFetcher.data && (
+          <Banner tone="critical">{createFetcher.data.error}</Banner>
+        )}
+
         <Card>
           <BlockStack gap="400">
             {rows.length > 0 ? (
