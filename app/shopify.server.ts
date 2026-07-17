@@ -24,63 +24,39 @@ const shopify = shopifyApp({
   },
   billing: {
     [BILLING_PLANS.BASIC]: {
-      lineItems: [
-        {
-          amount: 4.99,
-          currencyCode: "USD",
-          interval: BillingInterval.Every30Days,
-        },
-      ],
+      amount: 4.99,
+      currencyCode: "USD",
+      interval: BillingInterval.Every30Days,
       trialDays: 7,
     },
     [BILLING_PLANS.BASIC_YEARLY]: {
-      lineItems: [
-        {
-          amount: 47.90, // ~20% off 4.99 x 12
-          currencyCode: "USD",
-          interval: BillingInterval.Annual,
-        },
-      ],
+      amount: 47.90, // ~20% off 4.99 x 12
+      currencyCode: "USD",
+      interval: BillingInterval.Annual,
       trialDays: 7,
     },
     [BILLING_PLANS.GROWTH]: {
-      lineItems: [
-        {
-          amount: 8.99,
-          currencyCode: "USD",
-          interval: BillingInterval.Every30Days,
-        },
-      ],
+      amount: 8.99,
+      currencyCode: "USD",
+      interval: BillingInterval.Every30Days,
       trialDays: 7,
     },
     [BILLING_PLANS.GROWTH_YEARLY]: {
-      lineItems: [
-        {
-          amount: 86.30, // ~20% off 8.99 x 12
-          currencyCode: "USD",
-          interval: BillingInterval.Annual,
-        },
-      ],
+      amount: 86.30, // ~20% off 8.99 x 12
+      currencyCode: "USD",
+      interval: BillingInterval.Annual,
       trialDays: 7,
     },
     [BILLING_PLANS.PRO]: {
-      lineItems: [
-        {
-          amount: 14.99,
-          currencyCode: "USD",
-          interval: BillingInterval.Every30Days,
-        },
-      ],
+      amount: 14.99,
+      currencyCode: "USD",
+      interval: BillingInterval.Every30Days,
       trialDays: 7,
     },
     [BILLING_PLANS.PRO_YEARLY]: {
-      lineItems: [
-        {
-          amount: 143.90, // ~20% off 14.99 x 12
-          currencyCode: "USD",
-          interval: BillingInterval.Annual,
-        },
-      ],
+      amount: 143.90, // ~20% off 14.99 x 12
+      currencyCode: "USD",
+      interval: BillingInterval.Annual,
       trialDays: 7,
     },
   },
