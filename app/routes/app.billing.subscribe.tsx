@@ -13,8 +13,9 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ error: "No plan specified." }, { status: 400 });
   }
 
-  // Development stores can't process real charges — see store-type.server.ts
-  const isDevStore = await isDevelopmentStore(admin);
+  // Hardcoded true for one isolated diagnostic test — see if the
+  // isDevelopmentStore() check was returning the wrong value.
+  const isDevStore = true; // await isDevelopmentStore(admin);
 
   try {
     return await billing.request({
