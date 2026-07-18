@@ -120,10 +120,6 @@ export default function Dashboard() {
     submit({}, { method: "post" });
   };
 
-  const handleCancelSubscriptions = () => {
-    submit({ intent: "cancel-subscriptions" }, { method: "post" });
-  };
-
   const rows = recentMessages.map((m) => [
     m.phoneNumber,
     m.templateUsed,
@@ -161,39 +157,6 @@ export default function Dashboard() {
               )}
               {actionData && "error" in actionData && (
                 <Banner tone="critical">Failed: {actionData.error}</Banner>
-              )}
-            </BlockStack>
-          </Card>
-        </Layout.Section>
-
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="200">
-              <InlineStack align="space-between" blockAlign="center">
-                <Text as="h3" variant="headingSm">
-                  Troubleshooting: stuck billing subscription
-                </Text>
-                <Button onClick={handleCancelSubscriptions} loading={navigation.state === "submitting"}>
-                  Cancel any pending subscriptions
-                </Button>
-              </InlineStack>
-              <Text as="p" variant="bodySm" tone="subdued">
-                If clicking a plan on the Billing page fails with "Error
-                while creating a subscription", it's usually because an
-                earlier attempt left a subscription stuck in a pending
-                state, which blocks creating a new one. Click this to find
-                and cancel any such subscriptions, then try subscribing
-                again.
-              </Text>
-              {actionData && "subsSuccess" in actionData && (
-                <Banner tone="success">
-                  Found {actionData.found} subscription(s), attempted to
-                  cancel all of them. Check Vercel logs for details, then
-                  try the Billing page again.
-                </Banner>
-              )}
-              {actionData && "subsError" in actionData && (
-                <Banner tone="critical">Failed: {actionData.subsError}</Banner>
               )}
             </BlockStack>
           </Card>

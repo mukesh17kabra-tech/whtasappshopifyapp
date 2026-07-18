@@ -251,21 +251,6 @@ export default function Billing() {
         <Text as="p" variant="bodySm" tone="subdued" alignment="center">
           Every plan includes a 7-day free trial. Cancel anytime. Payments processed securely by Shopify.
         </Text>
-
-        <Card>
-          <BlockStack gap="300">
-            <Text as="h3" variant="headingSm">Developer testing — bypass Shopify billing</Text>
-            <Text as="p" variant="bodySm" tone="subdued">
-              Use while Shopify's Billing API is unavailable for this
-              account. Only sets a flag on this shop's row — no real charge.
-            </Text>
-            <ButtonGroup>
-              <Button pressed={effectivePlan === "Basic"} onClick={() => handleDevSetPlan("Basic")}>Basic</Button>
-              <Button pressed={effectivePlan === "Growth"} onClick={() => handleDevSetPlan("Growth")}>Growth</Button>
-              <Button pressed={effectivePlan === "Pro"} onClick={() => handleDevSetPlan("Pro")}>Pro</Button>
-            </ButtonGroup>
-          </BlockStack>
-        </Card>
       </BlockStack>
     </Page>
   );
