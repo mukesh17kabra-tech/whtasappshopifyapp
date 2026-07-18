@@ -33,8 +33,13 @@ export async function processFlowRunStep(flowRunId: string): Promise<void> {
           continue;
         }
       } else {
-        const days = step.delayDays ?? 1;
-        nextRunAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+        const days = step.delayDays ?? 0;
+        const hours = step.delayHours ?? 0;
+        const minutes = step.delayMinutes ?? 0;
+        const totalMs = (days * 24 * 60 * 60 + hours * 60 * 60 + minutes * 60) * 1000;
+        // If somehow all three are 0 (shouldn't normally happen from the
+        // UI), fall back to 1 day rather than scheduling an instant/past job.
+        nextRunAt = new Date(Date.now() + (totalMs > 0 ? totalMs : 24 * 60 * 60 * 1000));
       }
       await prisma.flowRun.update({
         where: { id: flowRunId },

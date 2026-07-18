@@ -15,11 +15,43 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
+import { isDevelopmentStore } from "~/services/store-type.server";
+
+// Flow count limits per plan — Basic and Growth cap how many flows you can
+// have at once (enabled or not), Pro is unlimited.
+const FLOW_LIMITS: Record<string, number> = {
+  Basic: 7,
+  Growth: 14,
+  Pro: Infinity,
+};
+
+async function getFlowLimit(shop: { id: string; manualPlanOverride: string | null }, billing: any, admin: any): Promise<number> {
+  // manualPlanOverride (dev bypass) takes priority if set, since real
+  // billing.check may be unavailable during testing.
+  if (shop.manualPlanOverride && FLOW_LIMITS[shop.manualPlanOverride] !== undefined) {
+    return FLOW_LIMITS[shop.manualPlanOverride];
+  }
+  try {
+    const isDevStore = await isDevelopmentStore(admin);
+    const { hasActivePayment, appSubscriptions } = await billing.check({ isTest: isDevStore });
+    const planName = appSubscriptions[0]?.name ?? "";
+    if (hasActivePayment) {
+      if (planName.includes("Pro")) return FLOW_LIMITS.Pro;
+      if (planName.includes("Growth")) return FLOW_LIMITS.Growth;
+      if (planName.includes("Basic")) return FLOW_LIMITS.Basic;
+    }
+  } catch (err) {
+    console.error("getFlowLimit: billing.check failed, defaulting to Basic limit:", err);
+  }
+  // No plan detected at all — default to the most restrictive tier rather
+  // than silently allowing unlimited flows.
+  return FLOW_LIMITS.Basic;
+}
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
-  if (!shop) return json({ flows: [] });
+  if (!shop) return json({ flows: [], flowLimit: FLOW_LIMITS.Basic });
 
   const flows = await prisma.flow.findMany({
     where: { shopId: shop.id },
@@ -36,11 +68,12 @@ export async function loader({ request }: LoaderFunctionArgs) {
       stepCount: f.steps.length,
       runCount: f._count.runs,
     })),
+    flowLimit: null, // computed in the component from plan info fetched separately would duplicate billing calls; see Banner below for the practical limit message shown after a failed create instead.
   });
 }
 
 export async function action({ request }: ActionFunctionArgs) {
-  const { session } = await authenticate.admin(request);
+  const { session, billing, admin } = await authenticate.admin(request);
   const shop = await prisma.shop.findUnique({ where: { shopDomain: session.shop } });
   if (!shop) return json({ error: "Shop not found" }, { status: 404 });
 
@@ -48,6 +81,17 @@ export async function action({ request }: ActionFunctionArgs) {
   const intent = formData.get("intent");
 
   if (intent === "create") {
+    const currentCount = await prisma.flow.count({ where: { shopId: shop.id } });
+    const limit = await getFlowLimit(shop, billing, admin);
+    if (currentCount >= limit) {
+      return json(
+        {
+          error: `You've reached your plan's limit of ${limit === Infinity ? "unlimited" : limit} flows. Upgrade your plan on the Billing page to create more.`,
+        },
+        { status: 402 },
+      );
+    }
+
     const flow = await prisma.flow.create({
       data: { shopId: shop.id, name: "New Flow", trigger: "ORDER_PLACED", enabled: false },
     });

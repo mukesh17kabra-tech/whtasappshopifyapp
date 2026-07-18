@@ -213,14 +213,16 @@ model Flow {
 }
 
 model FlowStep {
-  id         String    @id @default(cuid())
-  flow       Flow      @relation(fields: [flowId], references: [id])
-  flowId     String
-  position   Int       // order within the flow, 0-indexed
-  type       String    // "DELAY" | "SEND_MESSAGE"
-  delayDays  Int?      // used when type = "DELAY" and no sendDate is set
-  sendDate   DateTime? // used when type = "DELAY" instead of delayDays — send on this specific date
-  templateId String?   // used when type = "SEND_MESSAGE", references Template.id
+  id            String    @id @default(cuid())
+  flow          Flow      @relation(fields: [flowId], references: [id])
+  flowId        String
+  position      Int       // order within the flow, 0-indexed
+  type          String    // "DELAY" | "SEND_MESSAGE"
+  delayDays     Int?      // used when type = "DELAY" and no sendDate is set
+  delayHours    Int?      // additional hours, combined with delayDays
+  delayMinutes  Int?      // additional minutes, combined with delayDays/delayHours
+  sendDate      DateTime? // used when type = "DELAY" instead of delayDays — send on this specific date
+  templateId    String?   // used when type = "SEND_MESSAGE", references Template.id
 
   @@index([flowId])
 }

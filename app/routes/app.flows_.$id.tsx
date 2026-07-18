@@ -58,7 +58,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
     return json({ error: "Flow name is required" }, { status: 400 });
   }
 
-  let steps: Array<{ type: string; delayDays?: number; sendDate?: string; templateId?: string }>;
+  let steps: Array<{ type: string; delayDays?: number; delayHours?: number; delayMinutes?: number; sendDate?: string; templateId?: string }>;
   try {
     steps = JSON.parse(stepsJson);
   } catch {
@@ -74,7 +74,9 @@ export async function action({ request, params }: ActionFunctionArgs) {
           flowId: flow.id,
           position: index,
           type: step.type,
-          delayDays: step.type === "DELAY" && !step.sendDate ? step.delayDays ?? 1 : null,
+          delayDays: step.type === "DELAY" && !step.sendDate ? step.delayDays ?? 0 : null,
+          delayHours: step.type === "DELAY" && !step.sendDate ? step.delayHours ?? 0 : null,
+          delayMinutes: step.type === "DELAY" && !step.sendDate ? step.delayMinutes ?? 0 : null,
           sendDate: step.type === "DELAY" && step.sendDate ? new Date(step.sendDate) : null,
           templateId: step.type === "SEND_MESSAGE" ? step.templateId ?? null : null,
         },
@@ -88,7 +90,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
 const TRIGGER_OPTIONS = [{ label: "Order Placed", value: "ORDER_PLACED" }];
 
 type UIStep =
-  | { type: "DELAY"; mode: "days" | "date"; delayDays: number; sendDate: string }
+  | { type: "DELAY"; mode: "days" | "date"; delayDays: number; delayHours: number; delayMinutes: number; sendDate: string }
   | { type: "SEND_MESSAGE"; templateId: string };
 
 export default function FlowEditor() {
@@ -113,7 +115,9 @@ export default function FlowEditor() {
         ? {
             type: "DELAY",
             mode: s.sendDate ? "date" : "days",
-            delayDays: s.delayDays ?? 1,
+            delayDays: s.delayDays ?? 0,
+            delayHours: s.delayHours ?? 0,
+            delayMinutes: s.delayMinutes ?? 0,
             sendDate: s.sendDate ? new Date(s.sendDate).toISOString().slice(0, 10) : "",
           }
         : { type: "SEND_MESSAGE", templateId: s.templateId ?? "" },
@@ -139,7 +143,7 @@ export default function FlowEditor() {
     setSteps((prev) => [
       ...prev,
       type === "DELAY"
-        ? { type: "DELAY", mode: "days", delayDays: 1, sendDate: "" }
+        ? { type: "DELAY", mode: "days", delayDays: 1, delayHours: 0, delayMinutes: 0, sendDate: "" }
         : { type: "SEND_MESSAGE", templateId: "" },
     ]);
   }, []);
@@ -163,7 +167,13 @@ export default function FlowEditor() {
       JSON.stringify(
         steps.map((s) =>
           s.type === "DELAY"
-            ? { type: "DELAY", delayDays: s.mode === "days" ? s.delayDays : undefined, sendDate: s.mode === "date" ? s.sendDate : undefined }
+            ? {
+                type: "DELAY",
+                delayDays: s.mode === "days" ? s.delayDays : undefined,
+                delayHours: s.mode === "days" ? s.delayHours : undefined,
+                delayMinutes: s.mode === "days" ? s.delayMinutes : undefined,
+                sendDate: s.mode === "date" ? s.sendDate : undefined,
+              }
             : s,
         ),
       ),
@@ -278,18 +288,42 @@ export default function FlowEditor() {
                           />
                         </InlineStack>
                         {step.mode === "days" ? (
-                          <InlineStack gap="200" blockAlign="center">
-                            <Box minWidth="100px">
+                          <InlineStack gap="300" blockAlign="end" wrap>
+                            <Box minWidth="90px">
                               <TextField
                                 label="Days"
-                                labelHidden
                                 type="number"
+                                min={0}
                                 value={String(step.delayDays)}
-                                onChange={(v) => updateStep(index, { delayDays: Math.max(1, parseInt(v) || 1) })}
+                                onChange={(v) => updateStep(index, { delayDays: Math.max(0, parseInt(v) || 0) })}
                                 autoComplete="off"
                               />
                             </Box>
-                            <Text as="span" variant="bodyMd">day(s) after the previous step</Text>
+                            <Box minWidth="90px">
+                              <TextField
+                                label="Hours"
+                                type="number"
+                                min={0}
+                                max={23}
+                                value={String(step.delayHours)}
+                                onChange={(v) => updateStep(index, { delayHours: Math.min(23, Math.max(0, parseInt(v) || 0)) })}
+                                autoComplete="off"
+                              />
+                            </Box>
+                            <Box minWidth="90px">
+                              <TextField
+                                label="Minutes"
+                                type="number"
+                                min={0}
+                                max={59}
+                                value={String(step.delayMinutes)}
+                                onChange={(v) => updateStep(index, { delayMinutes: Math.min(59, Math.max(0, parseInt(v) || 0)) })}
+                                autoComplete="off"
+                              />
+                            </Box>
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              after the previous step (e.g. 1 day, 20 minutes)
+                            </Text>
                           </InlineStack>
                         ) : (
                           <Box minWidth="200px">
