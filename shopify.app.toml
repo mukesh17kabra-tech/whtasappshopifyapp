@@ -1,7 +1,7 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "afd65960afd4db07ce60f92168d1c716"
-name = "Watsapp offers & Alerts"
+name = "Flowify"
 application_url = "https://watsappsofferapp.vercel.app"
 embedded = true
 
