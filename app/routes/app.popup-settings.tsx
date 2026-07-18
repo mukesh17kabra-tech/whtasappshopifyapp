@@ -256,6 +256,9 @@ export default function PopupSettings() {
                   <div style={{ border: "1px solid #ddd", borderRadius: 6, padding: 8, marginBottom: 8, textAlign: "left", color: "#999" }}>
                     +91 98765 43210
                   </div>
+                  <div style={{ border: "1px solid #ddd", borderRadius: 6, padding: 8, marginBottom: 8, textAlign: "left", color: "#999" }}>
+                    Email (optional)
+                  </div>
                   <div style={{ background: "#25D366", color: "#fff", borderRadius: 6, padding: 10, fontWeight: 600 }}>
                     Notify me on WhatsApp
                   </div>
