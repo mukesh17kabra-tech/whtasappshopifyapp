@@ -77,7 +77,7 @@ export function ErrorBoundary() {
 
 const PLAN_FEATURES = {
   Basic: [
-    "Popup number/name capture",
+    "Popup number/name/email capture",
     "Order confirmation messages",
     "Shipment tracking updates",
     "Storefront product finder chatbot",
@@ -88,6 +88,8 @@ const PLAN_FEATURES = {
     "Everything in Basic",
     "Unlimited subscribers",
     "Marketing broadcasts",
+    "Automated Flows (multi-step, WhatsApp + Email)",
+    "Email sending alongside WhatsApp",
     "CSV bulk import",
     "Up to 500 subscribers",
     "Up to 250 broadcast messages monthly",
@@ -95,6 +97,7 @@ const PLAN_FEATURES = {
   Pro: [
     "Everything in Growth",
     "Priority support",
+    "Unlimited Flows",
     "Up to unlimited subscribers",
     "Up to unlimited broadcast messages monthly",
   ],
@@ -107,6 +110,8 @@ const COMPARISON_ROWS = [
   { feature: "Shipment tracking", Basic: "✓", Growth: "✓", Pro: "✓" },
   { feature: "Storefront chatbot", Basic: "✓", Growth: "✓", Pro: "✓" },
   { feature: "Marketing broadcasts", Basic: "✕", Growth: "✓", Pro: "✓" },
+  { feature: "Automated Flows", Basic: "✕", Growth: "✓", Pro: "✓" },
+  { feature: "Email sending", Basic: "✕", Growth: "✓", Pro: "✓" },
   { feature: "CSV bulk import", Basic: "✕", Growth: "✓", Pro: "✓" },
 ];
 

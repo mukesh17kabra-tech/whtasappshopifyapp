@@ -34,6 +34,7 @@ export default function App() {
         <Link to="/app/billing">Billing</Link>
       </NavMenu>
       <Outlet />
+      <div style={{ height: 80 }} aria-hidden="true" />
       <SupportChatBubble />
     </AppProvider>
   );
